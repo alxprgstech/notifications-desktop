@@ -54,8 +54,11 @@
               <ComboBox x:Name="Chats" Padding="8,5" MaxDropDownHeight="320" ItemTemplate="{StaticResource ChatLabel}"
                         AutomationProperties.Name="Существующий чат Codex"/>
             </DockPanel>
-            <TextBlock x:Name="ChatStatus" Text="Выберите чат из списка." Margin="0,0,0,12"
-                       Foreground="#B5C8E3" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+            <DockPanel Margin="0,0,0,12">
+              <Button DockPanel.Dock="Right" Content="Найти доступный чат" Click="FindAvailableChat" Margin="8,0,0,0"/>
+              <TextBlock x:Name="ChatStatus" Text="Выберите чат из списка." VerticalAlignment="Center"
+                         Foreground="#B5C8E3" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
+            </DockPanel>
           </StackPanel>
           <CheckBox x:Name="AutoStart" Content="Запускать в трее при входе в Windows"
                     Foreground="#EDF4FE" Margin="0,0,0,15" Click="ChangeStartup"/>

@@ -5,6 +5,7 @@ namespace Notify.Desktop;
 internal sealed class Codex(string executable)
 {
     private const string ChatInUse = "Этот чат открыт в другом процессе Codex. Освободите чат или выберите другой и нажмите «Подключить».";
+    private const string ChatUnavailable = "Этот чат недоступен локальному Codex. Выберите другой сохранённый чат.";
 
     internal static string? Find()
     {
@@ -43,17 +44,47 @@ internal sealed class Codex(string executable)
         try
         {
             await InitializeAsync(process, ct);
-            await WriteAsync(process, new { id = 2, method = "thread/resume",
-                @params = new { threadId = chat.Id, excludeTurns = true, approvalPolicy = "never", sandbox = "read-only" } }, ct);
-            var result = await ReadResultAsync(process, 2, ct);
-            if (result.Field("thread").String("id") != chat.Id)
-                throw new NotifyError("Codex не подтвердил выбранный чат.");
+            await ResumeChatAsync(process, chat, 2, ct);
         }
         finally
         {
             Kill(process);
             await process.WaitForExitAsync(ct);
         }
+    }
+
+    internal async Task<Chat?> FindAvailableChatAsync(IEnumerable<Chat> chats, CancellationToken ct)
+    {
+        using var process = Start(["app-server", "--listen", "stdio://"]);
+        using var cleanup = ct.Register(() => Kill(process));
+        try
+        {
+            await InitializeAsync(process, ct);
+            var requestId = 2;
+            foreach (var chat in chats)
+            {
+                if (!Directory.Exists(chat.Directory)) continue;
+                try { await ResumeChatAsync(process, chat, requestId++, ct); }
+                catch (NotifyError error) when (error.Message is ChatInUse or ChatUnavailable) { continue; }
+                return chat;
+            }
+            return null;
+        }
+        finally
+        {
+            Kill(process);
+            await process.WaitForExitAsync(ct);
+        }
+    }
+
+    private static async Task ResumeChatAsync(Process process, Chat chat, int id, CancellationToken ct)
+    {
+        await WriteAsync(process, new { id, method = "thread/resume",
+            @params = new { threadId = chat.Id, cwd = chat.Directory, excludeTurns = true,
+                approvalPolicy = "never", sandbox = "read-only" } }, ct);
+        var result = await ReadResultAsync(process, id, ct);
+        if (result.Field("thread").String("id") != chat.Id)
+            throw new NotifyError("Codex не подтвердил выбранный чат.");
     }
 
     private static string ChatLabel(JsonElement item)
@@ -158,7 +189,7 @@ internal sealed class Codex(string executable)
         if (diagnostic is null) return null;
         if (diagnostic.Contains("active writer", StringComparison.OrdinalIgnoreCase)) return ChatInUse;
         if (diagnostic.Contains("no rollout found", StringComparison.OrdinalIgnoreCase))
-            return "Этот чат недоступен локальному Codex. Выберите другой сохранённый чат.";
+            return ChatUnavailable;
         return null;
     }
 

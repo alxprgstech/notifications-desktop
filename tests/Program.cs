@@ -35,14 +35,11 @@ if (args is ["--codex-preflight"])
         Console.WriteLine("PASS: App Server reports the active-writer conflict before the call.");
     }
     var candidates = (await codex.ChatsAsync(preflightTimeout.Token)).Where(candidate => candidate.Id != chat.Id);
-    foreach (var candidate in candidates.Take(8))
-    {
-        try { await codex.CheckChatAsync(candidate, preflightTimeout.Token); }
-        catch (NotifyError) { continue; }
-        Console.WriteLine("PASS: A separate saved Codex chat can be resumed without sending a prompt.");
-        return;
-    }
-    throw new Exception("The sampled saved chats did not expose an available writer.");
+    var available = await codex.FindAvailableChatAsync(candidates, preflightTimeout.Token)
+        ?? throw new Exception("The saved chats did not expose an available writer.");
+    await codex.CheckChatAsync(available, preflightTimeout.Token);
+    Console.WriteLine("PASS: A separate saved Codex chat was found without sending a prompt and its writer was released.");
+    return;
 }
 
 static Task VerifyChatLabelAsync(Chat chat)

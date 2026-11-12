@@ -80,6 +80,21 @@ public partial class MainWindow : Window
 
     private async void RefreshChats(object sender, RoutedEventArgs e) => await WithControlsAsync(LoadChatsAsync);
 
+    private async void FindAvailableChat(object sender, RoutedEventArgs e) => await WithControlsAsync(async ct =>
+    {
+        if (Chats.Items.Count == 0) await LoadChatsAsync(ct);
+        if (Chats.Items.Count == 0) return;
+        ChatStatus.Text = "Ищем сохранённый чат, который Codex может открыть…";
+        try
+        {
+            var available = await RequireCodex().FindAvailableChatAsync(Chats.Items.OfType<Chat>(), ct);
+            if (available is not null) Chats.SelectedItem = available;
+            ChatStatus.Text = available is null ? "В загруженном списке нет доступного чата."
+                : "Доступный чат выбран. Нажмите «Подключить».";
+        }
+        catch (Exception error) { ChatStatus.Text = $"Поиск чата · {Friendly(error)}"; }
+    });
+
     private async Task LoadChatsAsync(CancellationToken ct)
     {
         var current = (Chats.SelectedItem as Chat)?.Id;
