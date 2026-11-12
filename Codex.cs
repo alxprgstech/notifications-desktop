@@ -4,6 +4,8 @@ namespace Notify.Desktop;
 
 internal sealed class Codex(string executable)
 {
+    private const string ChatInUse = "Этот чат открыт в другом процессе Codex. Освободите чат или выберите другой и нажмите «Подключить».";
+
     internal static string? Find()
     {
         var appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
@@ -23,9 +25,7 @@ internal sealed class Codex(string executable)
         using var cleanup = ct.Register(() => Kill(process));
         try
         {
-            await WriteAsync(process, new { id = 1, method = "initialize", @params = new { clientInfo = new { name = "notify_desktop", title = "ALXPRGS Notify Desktop", version = "1.0.0" } } }, ct);
-            await ReadResultAsync(process, 1, ct);
-            await WriteAsync(process, new { method = "initialized", @params = new { } }, ct);
+            await InitializeAsync(process, ct);
             await WriteAsync(process, new { id = 2, method = "thread/list", @params = new { limit = 50, archived = false, sortKey = "updated_at" } }, ct);
             var result = await ReadResultAsync(process, 2, ct);
             return result.GetProperty("data").EnumerateArray().Select(item =>
@@ -33,6 +33,27 @@ internal sealed class Codex(string executable)
                     item.String("cwd"))).ToList();
         }
         finally { Kill(process); }
+    }
+
+    internal async Task CheckChatAsync(Chat chat, CancellationToken ct)
+    {
+        RequireChatDirectory(chat);
+        using var process = Start(["app-server", "--listen", "stdio://"], chat.Directory);
+        using var cleanup = ct.Register(() => Kill(process));
+        try
+        {
+            await InitializeAsync(process, ct);
+            await WriteAsync(process, new { id = 2, method = "thread/resume",
+                @params = new { threadId = chat.Id, excludeTurns = true, approvalPolicy = "never", sandbox = "read-only" } }, ct);
+            var result = await ReadResultAsync(process, 2, ct);
+            if (result.Field("thread").String("id") != chat.Id)
+                throw new NotifyError("Codex не подтвердил выбранный чат.");
+        }
+        finally
+        {
+            Kill(process);
+            await process.WaitForExitAsync(ct);
+        }
     }
 
     private static string ChatLabel(JsonElement item)
@@ -54,7 +75,13 @@ internal sealed class Codex(string executable)
         if (existing.ExitCode == 0)
         {
             using var config = JsonDocument.Parse(output);
-            if (string.Equals(config.RootElement.Field("transport").String("command"), current, StringComparison.OrdinalIgnoreCase))
+            var transport = config.RootElement.Field("transport");
+            var command = transport.String("command");
+            var args = transport.Field("args");
+            if (string.Equals(command, current, StringComparison.OrdinalIgnoreCase) ||
+                command is not null && Path.IsPathFullyQualified(command) && File.Exists(command) &&
+                string.Equals(Path.GetFileName(command), Path.GetFileName(current), StringComparison.OrdinalIgnoreCase) &&
+                args.ValueKind == JsonValueKind.Array && args.GetArrayLength() == 1 && args[0].GetString() == "--mcp")
                 return;
             throw new NotifyError("Имя MCP alxprgs-notify-desktop занято другой установкой.");
         }
@@ -67,10 +94,14 @@ internal sealed class Codex(string executable)
 
     internal async Task<string> ReplyAsync(Chat chat, string text, CancellationToken ct)
     {
-        if (!Directory.Exists(chat.Directory))
-            throw new NotifyError("Рабочий каталог чата Codex недоступен.");
+        RequireChatDirectory(chat);
+        string? failure = null;
         using var process = Start(["--ask-for-approval", "never", "--sandbox", "read-only",
-            "exec", "resume", "--json", "--skip-git-repo-check", chat.Id, "-"], chat.Directory);
+            "exec", "resume", "--json", "--skip-git-repo-check", chat.Id, "-"], chat.Directory,
+            diagnostic =>
+            {
+                if (ExplainFailure(diagnostic) is { } known) Interlocked.CompareExchange(ref failure, known, null);
+            });
         using var cleanup = ct.Register(() => Kill(process));
         try
         {
@@ -82,18 +113,23 @@ internal sealed class Codex(string executable)
                 if (!line.StartsWith('{')) continue;
                 using var doc = JsonDocument.Parse(line);
                 var entry = doc.RootElement;
+                if (entry.String("type") is "error" or "turn.failed")
+                {
+                    var message = entry.String("message") ?? entry.Field("error").String("message");
+                    if (ExplainFailure(message) is { } known) Interlocked.CompareExchange(ref failure, known, null);
+                }
                 var item = entry.Field("item");
                 if (entry.String("type") == "item.completed" && item.String("type") == "agent_message")
                     reply = item.String("text");
             }
             await process.WaitForExitAsync(ct);
             return process.ExitCode == 0 && !string.IsNullOrWhiteSpace(reply)
-                ? reply : throw new NotifyError("Codex не вернул ответ. Проверьте вход и доступность выбранного чата.");
+                ? reply : throw new NotifyError(failure ?? "Codex не вернул ответ. Проверьте вход и доступность выбранного чата.");
         }
         finally { Kill(process); }
     }
 
-    private Process Start(string[] arguments, string? directory = null)
+    private Process Start(string[] arguments, string? directory = null, Action<string>? diagnostic = null)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -103,9 +139,35 @@ internal sealed class Codex(string executable)
         };
         foreach (var arg in arguments) start.ArgumentList.Add(arg);
         var process = Process.Start(start) ?? throw new NotifyError("Не удалось запустить Codex.");
-        process.ErrorDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, eventArgs) =>
+        {
+            if (eventArgs.Data is { } line) diagnostic?.Invoke(line);
+        };
         process.BeginErrorReadLine();
         return process;
+    }
+
+    private static void RequireChatDirectory(Chat chat)
+    {
+        if (!Directory.Exists(chat.Directory))
+            throw new NotifyError("Рабочий каталог чата Codex недоступен.");
+    }
+
+    internal static string? ExplainFailure(string? diagnostic)
+    {
+        if (diagnostic is null) return null;
+        if (diagnostic.Contains("active writer", StringComparison.OrdinalIgnoreCase)) return ChatInUse;
+        if (diagnostic.Contains("no rollout found", StringComparison.OrdinalIgnoreCase))
+            return "Этот чат недоступен локальному Codex. Выберите другой сохранённый чат.";
+        return null;
+    }
+
+    private static async Task InitializeAsync(Process process, CancellationToken ct)
+    {
+        await WriteAsync(process, new { id = 1, method = "initialize",
+            @params = new { clientInfo = new { name = "notify_desktop", title = "ALXPRGS Notify Desktop", version = "1.0.0" } } }, ct);
+        await ReadResultAsync(process, 1, ct);
+        await WriteAsync(process, new { method = "initialized", @params = new { } }, ct);
     }
 
     private static Task WriteAsync(Process process, object value, CancellationToken ct) =>
@@ -119,10 +181,12 @@ internal sealed class Codex(string executable)
             if (doc.RootElement.Field("id") is { ValueKind: JsonValueKind.Number } value && value.GetInt32() == id)
             {
                 if (doc.RootElement.TryGetProperty("result", out var result)) return result.Clone();
+                if (ExplainFailure(doc.RootElement.Field("error").String("message")) is { } known)
+                    throw new NotifyError(known);
                 break;
             }
         }
-        throw new NotifyError("Codex App Server не вернул список чатов.");
+        throw new NotifyError("Codex App Server не подтвердил запрос.");
     }
 
     private static void Kill(Process process)

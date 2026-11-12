@@ -19,6 +19,32 @@ if (args is ["--codex-discovery"])
     return;
 }
 
+if (args is ["--codex-preflight"])
+{
+    var executable = Codex.Find() ?? throw new Exception("Codex CLI was not detected.");
+    var codex = new Codex(executable);
+    using var preflightTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(25));
+    var chat = LocalSettings.Read().Chat ?? throw new Exception("No selected Codex chat.");
+    try
+    {
+        await codex.CheckChatAsync(chat, preflightTimeout.Token);
+        Console.WriteLine("Selected Codex chat can be resumed.");
+    }
+    catch (NotifyError error) when (error.Message.Contains("открыт в другом процессе Codex"))
+    {
+        Console.WriteLine("PASS: App Server reports the active-writer conflict before the call.");
+    }
+    var candidates = (await codex.ChatsAsync(preflightTimeout.Token)).Where(candidate => candidate.Id != chat.Id);
+    foreach (var candidate in candidates.Take(8))
+    {
+        try { await codex.CheckChatAsync(candidate, preflightTimeout.Token); }
+        catch (NotifyError) { continue; }
+        Console.WriteLine("PASS: A separate saved Codex chat can be resumed without sending a prompt.");
+        return;
+    }
+    throw new Exception("The sampled saved chats did not expose an available writer.");
+}
+
 static Task VerifyChatLabelAsync(Chat chat)
 {
     var result = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -136,6 +162,10 @@ await using (var relay = new McpRelay(new NotifyHttp(new Uri("https://notify.exa
     Equal(1, await relay.ProbeAsync(CancellationToken.None));
 Equal(4, handler.Requests);
 Console.WriteLine("PASS: MCP initialize, tools/list over SSE and session cleanup.");
+if (Codex.ExplainFailure("thread-store conflict: thread synthetic already has an active writer") is not { } conflict ||
+    !conflict.Contains("открыт в другом процессе Codex") || conflict.Contains("synthetic"))
+    throw new Exception("Codex writer conflicts were not classified safely.");
+Equal<string?>(null, Codex.ExplainFailure("synthetic unrecognized failure"));
 await TlsBridgeSpec.RunAsync();
 
 object Event(string type, object payload) => new { type, protocolVersion = protocol, payload };

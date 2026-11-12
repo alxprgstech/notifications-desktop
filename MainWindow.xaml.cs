@@ -125,6 +125,17 @@ public partial class MainWindow : Window
         ShowRegistration(registration);
         if (!registration.SupportedCallProtocols.Contains(AgentBridge.CallProtocol, StringComparer.Ordinal))
             throw new NotifyError("Сервер Notify должен поддерживать протокол звонков v2.");
+        if (codex is not null && chat is not null)
+        {
+            ChatStatus.Text = "Проверяем доступность выбранного чата…";
+            try { await codex.CheckChatAsync(chat, ct); }
+            catch (NotifyError error)
+            {
+                ChatStatus.Text = error.Message;
+                throw;
+            }
+            ChatStatus.Text = "Чат доступен для подключения.";
+        }
         if (codex is not null && installMcp)
         {
             await codex.SetupMcpAsync(ct);
