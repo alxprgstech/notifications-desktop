@@ -7,6 +7,12 @@ using System.Text;
 using System.Text.Json;
 using Notify.Desktop;
 
+if (args is ["--wss-soak"])
+{
+    await TlsBridgeSpec.RunAsync(reconnects: 40);
+    return;
+}
+
 if (args is ["--codex-discovery"])
 {
     var executable = Codex.Find() ?? throw new Exception("Codex CLI was not detected.");

@@ -35,9 +35,12 @@ Windows-приложение .NET 10 / WPF для подключения сущ�
 ```powershell
 dotnet publish Notify.Desktop.csproj -c Release -r win-x64 --self-contained false -o artifacts/win-x64
 dotnet run --project tests/Notify.Desktop.Specs.csproj -c Release
+dotnet run --project tests/Notify.Desktop.Specs.csproj -c Release -- --wss-soak
 ```
 
 Тесты транспорта проверяют именованный канал, а также HTTPS-регистрацию, обрыв и восстановление WSS, heartbeat и возврат реплики на локальном TLS-стенде. Стенд использует временный сертификат и не меняет хранилище доверия Windows. Режим разговора поддерживает серверный STT/TTS. Голосовые файлы и отдельные фоновые задачи обслуживаются соответствующими агентами Notify.
+
+Длительный тест принудительно обрывает WSS 40 раз. Он проверяет закрытие предыдущего сокета при каждом переподключении и выводит память и число дескрипторов общего процесса стенда и моста каждые десять соединений.
 
 - [Официальная документация Codex App Server](https://developers.openai.com/codex/app-server/)
 - [Официальная документация DeepSeek Harness и Cordis](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cordis-tutorial/index.md)

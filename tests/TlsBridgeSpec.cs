@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -23,9 +24,9 @@ internal static class TlsBridgeSpec
     private const string TurnId = "c0000000000000000000000000000001";
     private const string Token = "synthetic-token-for-loopback-only";
 
-    internal static async Task RunAsync()
+    internal static async Task RunAsync(int reconnects = 1)
     {
-        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30 + reconnects * 3));
         var ct = timeout.Token;
         using var key = RSA.Create(2048);
         var request = new CertificateRequest("CN=localhost", key, HashAlgorithmName.SHA256, RSASignaturePadding.Pkcs1);
@@ -48,6 +49,7 @@ internal static class TlsBridgeSpec
         var count = 0;
         var live = 0;
         var replies = 0;
+        var samples = new List<ResourceSample>();
         var observed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         server.MapGet("/api/v1/agents/self", (HttpContext context) =>
             Authorized(context)
@@ -61,6 +63,7 @@ internal static class TlsBridgeSpec
             Interlocked.Increment(ref live);
             try
             {
+                Require(Volatile.Read(ref live) == 1, "A previous WebSocket remained live after reconnect");
                 var hello = await ReadAsync(socket, ct);
                 Require(hello.String("type") == "hello" && hello.String("agentId") == AgentId, "Agent hello mismatch");
                 var sessionId = hello.GetProperty("sessions")[0].String("id");
@@ -68,7 +71,9 @@ internal static class TlsBridgeSpec
                     callProtocol = AgentBridge.CallProtocol, heartbeatSeconds = 1, agent = new { id = AgentId } }, ct);
                 var first = await ReadAsync(socket, ct);
                 Require(first.String("type") == "heartbeat", "Heartbeat missing on WSS");
-                if (connection == 1)
+                if (reconnects >= 10 && connection % 10 == 0)
+                    samples.Add(ResourceSample.Capture(connection));
+                if (connection <= reconnects)
                 {
                     context.Abort();
                     return;
@@ -119,7 +124,8 @@ internal static class TlsBridgeSpec
         {
             await observed.Task.WaitAsync(ct);
             var diagnostic = await api.RegistrationAsync(ct);
-            Require(diagnostic.Online && count == 2 && replies == 1, "Diagnostics changed the live connection or the reply was duplicated");
+            Require(diagnostic.Online && count == reconnects + 1 && replies == 1,
+                "Diagnostics changed the live connection or the reply was duplicated");
         }
         finally
         {
@@ -127,7 +133,20 @@ internal static class TlsBridgeSpec
             await running.WaitAsync(ct);
             await server.StopAsync(ct);
         }
+        Require(live == 0, "A WebSocket remained live after shutdown");
         Console.WriteLine("PASS: HTTPS registration, authenticated WSS reconnect, heartbeat, conversation and non-disruptive diagnostics.");
+        foreach (var sample in samples) Console.WriteLine(sample);
+    }
+
+    private sealed record ResourceSample(int Connection, double PrivateMiB, double ManagedMiB, int Handles)
+    {
+        internal static ResourceSample Capture(int connection)
+        {
+            const double mib = 1024 * 1024;
+            var managed = GC.GetTotalMemory(forceFullCollection: true);
+            using var process = Process.GetCurrentProcess();
+            return new(connection, process.PrivateMemorySize64 / mib, managed / mib, process.HandleCount);
+        }
     }
 
     private static bool Authorized(HttpContext context) => context.Request.Headers.Authorization == "Bearer " + Token;
