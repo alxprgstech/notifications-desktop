@@ -31,6 +31,11 @@ public partial class MainWindow : Window
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
         AutoStart.IsChecked = run?.GetValue(RunValue) is string;
         DetectClients();
+        ContentRendered += async (_, _) =>
+        {
+            if (Client.SelectedIndex == 0 && Chats.Items.Count == 0 && Codex.Find() is not null)
+                await WithControlsAsync(LoadChatsAsync);
+        };
         Closing += (_, eventArgs) => { if (!exiting) { eventArgs.Cancel = true; Hide(); } };
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Notify", null, (_, _) => ShowWindow());
@@ -73,19 +78,26 @@ public partial class MainWindow : Window
             CodexPicker.Visibility = Client.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async void RefreshChats(object sender, RoutedEventArgs e)
+    private async void RefreshChats(object sender, RoutedEventArgs e) => await WithControlsAsync(LoadChatsAsync);
+
+    private async Task LoadChatsAsync(CancellationToken ct)
     {
-        await WithControlsAsync(async ct =>
+        var current = (Chats.SelectedItem as Chat)?.Id;
+        ChatStatus.Text = "Загружаем список чатов Codex…";
+        try
         {
-            var codex = RequireCodex();
-            Report("Чтение списка чатов Codex…");
-            var current = (Chats.SelectedItem as Chat)?.Id;
-            var chats = await codex.ChatsAsync(ct);
+            var chats = await RequireCodex().ChatsAsync(ct);
             Chats.Items.Clear();
             foreach (var chat in chats) Chats.Items.Add(chat);
             Chats.SelectedItem = chats.FirstOrDefault(chat => chat.Id == current);
-            Report(chats.Count == 0 ? "Сохранённых чатов Codex нет." : "Выберите чат Codex.");
-        });
+            ChatStatus.Text = chats.Count == 0
+                ? "Codex не вернул сохранённых чатов."
+                : $"Чатов в списке: {chats.Count}. Выберите чат.";
+        }
+        catch (Exception error)
+        {
+            ChatStatus.Text = $"Список чатов · {Friendly(error)}";
+        }
     }
 
     private async void Connect(object sender, RoutedEventArgs e) => await ConnectAsync(installMcp: true);
@@ -102,10 +114,8 @@ public partial class MainWindow : Window
             codex = RequireCodex();
             if (chat is null)
             {
-                var chats = await codex.ChatsAsync(ct);
-                Chats.Items.Clear();
-                foreach (var entry in chats) Chats.Items.Add(entry);
-                Report(chats.Count == 0 ? "Сохранённых чатов Codex нет." : "Выберите чат Codex и нажмите «Подключить».");
+                if (Chats.Items.Count == 0) await LoadChatsAsync(ct);
+                else ChatStatus.Text = "Выберите чат и нажмите «Подключить».";
                 return;
             }
         }

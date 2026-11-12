@@ -1,5 +1,7 @@
+using System.IO;
 using System.IO.Pipes;
 using System.Net;
+using System.Net.Http;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -10,8 +12,39 @@ if (args is ["--codex-discovery"])
     var executable = Codex.Find() ?? throw new Exception("Codex CLI was not detected.");
     using var discoveryTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
     var chats = await new Codex(executable).ChatsAsync(discoveryTimeout.Token);
+    if (chats.Count == 0 || chats.Any(chat => string.IsNullOrWhiteSpace(chat.Name)))
+        throw new Exception("Codex did not return a usable chat list.");
+    await VerifyChatLabelAsync(chats[0]);
     Console.WriteLine($"PASS: Codex App Server discovery ({chats.Count} saved chats returned).");
     return;
+}
+
+static Task VerifyChatLabelAsync(Chat chat)
+{
+    var result = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var thread = new Thread(() =>
+    {
+        try
+        {
+            var window = new MainWindow();
+            var picker = (System.Windows.Controls.ComboBox)window.FindName("Chats");
+            var label = (System.Windows.Controls.TextBlock)picker.ItemTemplate.LoadContent();
+            label.DataContext = chat;
+            System.Windows.Threading.Dispatcher.CurrentDispatcher.Invoke(
+                () => { }, System.Windows.Threading.DispatcherPriority.ContextIdle);
+            if (label.Text != chat.Name)
+                throw new Exception("Chat title was not rendered by the dropdown template.");
+            var foreground = (System.Windows.Media.SolidColorBrush)label.Foreground;
+            Equal(System.Windows.SystemColors.WindowTextColor, foreground.Color);
+            if (foreground.Color == System.Windows.SystemColors.WindowColor)
+                throw new Exception("Chat title is invisible against the dropdown background.");
+            result.SetResult();
+        }
+        catch (Exception error) { result.SetException(error); }
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    return result.Task;
 }
 
 using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));

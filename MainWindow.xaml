@@ -19,6 +19,16 @@
     <Style TargetType="PasswordBox">
       <Setter Property="Padding" Value="8,6"/>
     </Style>
+    <Style TargetType="ComboBox">
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"/>
+    </Style>
+    <Style TargetType="ComboBoxItem">
+      <Setter Property="Foreground" Value="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"/>
+    </Style>
+    <DataTemplate x:Key="ChatLabel">
+      <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"
+                 Foreground="{DynamicResource {x:Static SystemColors.WindowTextBrushKey}}"/>
+    </DataTemplate>
   </Window.Resources>
   <ScrollViewer VerticalScrollBarVisibility="Auto">
     <StackPanel Margin="32,27">
@@ -39,10 +49,13 @@
           </ComboBox>
           <StackPanel x:Name="CodexPicker">
             <TextBlock Text="Существующий чат Codex" Margin="0,0,0,5"/>
-            <DockPanel Margin="0,0,0,14">
+            <DockPanel Margin="0,0,0,4">
               <Button DockPanel.Dock="Right" Content="Обновить список" Click="RefreshChats" Margin="8,0,0,0"/>
-              <ComboBox x:Name="Chats" Padding="8,5" AutomationProperties.Name="Существующий чат Codex"/>
+              <ComboBox x:Name="Chats" Padding="8,5" MaxDropDownHeight="320" ItemTemplate="{StaticResource ChatLabel}"
+                        AutomationProperties.Name="Существующий чат Codex"/>
             </DockPanel>
+            <TextBlock x:Name="ChatStatus" Text="Выберите чат из списка." Margin="0,0,0,12"
+                       Foreground="#B5C8E3" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
           </StackPanel>
           <CheckBox x:Name="AutoStart" Content="Запускать в трее при входе в Windows"
                     Foreground="#EDF4FE" Margin="0,0,0,15" Click="ChangeStartup"/>

@@ -29,10 +29,19 @@ internal sealed class Codex(string executable)
             await WriteAsync(process, new { id = 2, method = "thread/list", @params = new { limit = 50, archived = false, sortKey = "updated_at" } }, ct);
             var result = await ReadResultAsync(process, 2, ct);
             return result.GetProperty("data").EnumerateArray().Select(item =>
-                new Chat(item.GetProperty("id").GetString()!, item.String("name") ?? item.String("preview") ?? "Чат Codex",
+                new Chat(item.GetProperty("id").GetString()!, ChatLabel(item),
                     item.String("cwd"))).ToList();
         }
         finally { Kill(process); }
+    }
+
+    private static string ChatLabel(JsonElement item)
+    {
+        var title = item.String("name");
+        if (!string.IsNullOrWhiteSpace(title)) return title.Trim();
+        var preview = item.String("preview");
+        if (!string.IsNullOrWhiteSpace(preview)) return preview.Trim();
+        return "Чат Codex · " + item.GetProperty("id").GetString();
     }
 
     internal async Task SetupMcpAsync(CancellationToken ct)
