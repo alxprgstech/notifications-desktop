@@ -1,0 +1,70 @@
+<Window x:Class="Notify.Desktop.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="ALXPRGS Notify Desktop" Width="780" Height="710" MinWidth="610" MinHeight="540"
+        WindowStartupLocation="CenterScreen" Background="#111825" Foreground="#EDF4FE"
+        FontFamily="Segoe UI" FontSize="14">
+  <Window.Resources>
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="#E2EBF8"/>
+      <Setter Property="Foreground" Value="#142238"/>
+      <Setter Property="Padding" Value="14,8"/>
+      <Setter Property="Margin" Value="0,0,8,0"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Cursor" Value="Hand"/>
+    </Style>
+    <Style TargetType="TextBox">
+      <Setter Property="Padding" Value="8,6"/>
+    </Style>
+    <Style TargetType="PasswordBox">
+      <Setter Property="Padding" Value="8,6"/>
+    </Style>
+  </Window.Resources>
+  <ScrollViewer VerticalScrollBarVisibility="Auto">
+    <StackPanel Margin="32,27">
+      <TextBlock Text="ALXPRGS Notify Desktop" FontSize="29" FontWeight="SemiBold"/>
+      <TextBlock x:Name="Detection" Margin="0,5,0,19" Foreground="#B5C8E3" TextWrapping="Wrap"/>
+      <Border Background="#1C283B" CornerRadius="12" Padding="20">
+        <StackPanel x:Name="Setup">
+          <TextBlock Text="Подключение" FontSize="20" FontWeight="SemiBold" Margin="0,0,0,13"/>
+          <TextBlock Text="HTTPS-адрес Notify" Margin="0,0,0,5"/>
+          <TextBox x:Name="Origin" Margin="0,0,0,11" AutomationProperties.Name="HTTPS-адрес Notify"/>
+          <TextBlock x:Name="TokenLabel" Text="Токен источника" Margin="0,0,0,5"/>
+          <PasswordBox x:Name="Token" Margin="0,0,0,11" AutomationProperties.Name="Токен источника"/>
+          <TextBlock Text="Клиент" Margin="0,0,0,5"/>
+          <ComboBox x:Name="Client" SelectedIndex="0" SelectionChanged="ClientChanged"
+                    AutomationProperties.Name="Клиент" Padding="8,5" Margin="0,0,0,11">
+            <ComboBoxItem Content="Codex"/>
+            <ComboBoxItem Content="Harness"/>
+          </ComboBox>
+          <StackPanel x:Name="CodexPicker">
+            <TextBlock Text="Существующий чат Codex" Margin="0,0,0,5"/>
+            <DockPanel Margin="0,0,0,14">
+              <Button DockPanel.Dock="Right" Content="Обновить список" Click="RefreshChats" Margin="8,0,0,0"/>
+              <ComboBox x:Name="Chats" Padding="8,5" AutomationProperties.Name="Существующий чат Codex"/>
+            </DockPanel>
+          </StackPanel>
+          <CheckBox x:Name="AutoStart" Content="Запускать в трее при входе в Windows"
+                    Foreground="#EDF4FE" Margin="0,0,0,15" Click="ChangeStartup"/>
+          <WrapPanel>
+            <Button Content="Подключить" Click="Connect" Background="#63E4CF" FontWeight="SemiBold"/>
+            <Button Content="Проверить соединение" Click="Check"/>
+            <Button Content="Кабинет Notify" Click="OpenCabinet"/>
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+      <Border Background="#1C283B" CornerRadius="12" Padding="20" Margin="0,14,0,0">
+        <StackPanel>
+          <TextBlock Text="Состояние" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock x:Name="Status" Text="Отключено" Foreground="#83E9D9" TextWrapping="Wrap" Margin="0,7,0,3"/>
+          <TextBlock x:Name="Registration" Foreground="#B5C8E3" TextWrapping="Wrap" Margin="0,0,0,6"/>
+          <TextBlock x:Name="History" Foreground="#B5C8E3" TextWrapping="Wrap" Margin="0,0,0,10"/>
+          <WrapPanel>
+            <Button x:Name="Stop" Content="Отключить" IsEnabled="False" Click="Disconnect"/>
+            <Button Content="Свернуть в трей" Click="HideWindow"/>
+          </WrapPanel>
+        </StackPanel>
+      </Border>
+    </StackPanel>
+  </ScrollViewer>
+</Window>
