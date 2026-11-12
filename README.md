@@ -35,7 +35,7 @@ dotnet publish Notify.Desktop.csproj -c Release -r win-x64 --self-contained fals
 dotnet run --project tests/Notify.Desktop.Specs.csproj -c Release
 ```
 
-Тест транспорта проверяет реальный WebSocket поверх именованного канала с синтетическими репликами. Режим разговора поддерживает серверный STT/TTS. Голосовые файлы и отдельные фоновые задачи обслуживаются соответствующими агентами Notify.
+Тесты транспорта проверяют именованный канал, а также HTTPS-регистрацию, обрыв и восстановление WSS, heartbeat и возврат реплики на локальном TLS-стенде. Стенд использует временный сертификат и не меняет хранилище доверия Windows. Режим разговора поддерживает серверный STT/TTS. Голосовые файлы и отдельные фоновые задачи обслуживаются соответствующими агентами Notify.
 
 - [Официальная документация Codex App Server](https://developers.openai.com/codex/app-server/)
 - [Официальная документация DeepSeek Harness и Cordis](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/cordis-tutorial/index.md)

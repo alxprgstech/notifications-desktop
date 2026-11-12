@@ -4,7 +4,7 @@ using System.Threading.Channels;
 namespace Notify.Desktop;
 
 internal sealed class AgentBridge(Uri origin, string token, Registration registration, Chat chat,
-    Func<string, CancellationToken, Task<string>> reply, Action<string> report)
+    Func<string, CancellationToken, Task<string>> reply, Action<string> report, HttpMessageInvoker? transport = null)
 {
     private const string Protocol = "alxprgs.notify.agent.v1";
     internal const string CallProtocol = "alxprgs.notify.call.v2";
@@ -49,7 +49,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         using var opening = CancellationTokenSource.CreateLinkedTokenSource(ct);
         opening.CancelAfter(TimeSpan.FromSeconds(15));
         var address = new UriBuilder(origin) { Scheme = "wss", Path = "/api/v1/agents/connect" }.Uri;
-        await socket.ConnectAsync(address, NotifyHttp.Client, opening.Token);
+        await socket.ConnectAsync(address, transport ?? NotifyHttp.Client, opening.Token);
         await RunSessionAsync(socket, connected, ct);
     }
 

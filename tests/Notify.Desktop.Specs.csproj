@@ -8,6 +8,7 @@
     <AssemblyName>Notify.Desktop.Specs</AssemblyName>
   </PropertyGroup>
   <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
     <ProjectReference Include="../Notify.Desktop.csproj" />
   </ItemGroup>
 </Project>

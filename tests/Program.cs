@@ -136,6 +136,7 @@ await using (var relay = new McpRelay(new NotifyHttp(new Uri("https://notify.exa
     Equal(1, await relay.ProbeAsync(CancellationToken.None));
 Equal(4, handler.Requests);
 Console.WriteLine("PASS: MCP initialize, tools/list over SSE and session cleanup.");
+await TlsBridgeSpec.RunAsync();
 
 object Event(string type, object payload) => new { type, protocolVersion = protocol, payload };
 ValueTask Send(object value) => server.SendAsync(JsonSerializer.SerializeToUtf8Bytes(value).AsMemory(), WebSocketMessageType.Text, true, ct);
