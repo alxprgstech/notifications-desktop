@@ -79,7 +79,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         var turns = Channel.CreateBounded<Turn>(new BoundedChannelOptions(1) { FullMode = BoundedChannelFullMode.DropOldest });
         var dialog = new DialogState();
         var reader = ReadLoopAsync(socket, buffer, outbound.Writer, turns.Writer, dialog, lifetime.Token);
-        var writer = SendLoopAsync(socket, outbound.Reader, lifetime.Token);
+        var writer = SendLoopAsync(socket, outbound.Reader, dialog, lifetime.Token);
         var timer = HeartbeatAsync(seconds, outbound.Writer, lifetime.Token);
         var worker = ReplyLoopAsync(turns.Reader, outbound.Writer, dialog, lifetime.Token);
         try
@@ -123,6 +123,9 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     Volatile.Write(ref dialog.Latest, turn);
                     turns.TryWrite(turn);
                     break;
+                case "call.interrupted" when callId == acceptedCall && payload.String("reason") == "user_speech":
+                    Volatile.Write(ref dialog.Latest, null);
+                    break;
                 case "call.ended" when callId == acceptedCall:
                     acceptedCall = null;
                     Volatile.Write(ref dialog.Latest, null);
@@ -155,9 +158,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                 if (!ReferenceEquals(Volatile.Read(ref dialog.Latest), turn)) continue;
                 if (text.Length == 0) throw new NotifyError("Чат вернул пустой ответ.");
                 if (text.Length > 1000) text = text[..(char.IsHighSurrogate(text[999]) ? 999 : 1000)];
-                // The server uses turnId to suppress replies superseded by a newer user turn.
-                await outbound.WriteAsync(Call("call.say", new { turn.CallId, turn.TurnId, text }), ct);
-                report("Агент на связи · ответ передан");
+                // Notify uses turnId to deduplicate replies.
+                await outbound.WriteAsync(new ReplyFrame(turn, text), ct);
             }
             catch (Exception error) when (!ct.IsCancellationRequested)
             {
@@ -173,13 +175,18 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
             await outbound.WriteAsync(new { type = "heartbeat", protocolVersion = Protocol, eventId = Id() }, ct);
     }
 
-    private static async Task SendLoopAsync(WebSocket socket, ChannelReader<object> outbound, CancellationToken ct)
+    private async Task SendLoopAsync(WebSocket socket, ChannelReader<object> outbound, DialogState dialog, CancellationToken ct)
     {
         await foreach (var value in outbound.ReadAllAsync(ct))
         {
+            var reply = value as ReplyFrame;
+            if (reply is not null && !ReferenceEquals(Volatile.Read(ref dialog.Latest), reply.Turn)) continue;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(8));
-            await SendAsync(socket, value, timeout.Token);
+            var frame = reply is null ? value
+                : Call("call.say", new { reply.Turn.CallId, reply.Turn.TurnId, reply.Text });
+            await SendAsync(socket, frame, timeout.Token);
+            if (reply is not null) report("Агент на связи · ответ передан");
         }
     }
 
@@ -217,4 +224,5 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     private static object Call(string type, object payload) => new { type, protocolVersion = CallProtocol, eventId = Id(), payload };
     private sealed class DialogState { public Turn? Latest; }
     private sealed record Turn(string CallId, string TurnId, string Text);
+    private sealed record ReplyFrame(Turn Turn, string Text);
 }

@@ -86,9 +86,12 @@ const string callId = "10000000000000000000000000000000";
 const string firstTurn = "20000000000000000000000000000000";
 const string secondTurn = "30000000000000000000000000000000";
 const string agentId = "40000000000000000000000000000000";
+const string interruptedTurn = "50000000000000000000000000000000";
 var registration = new Registration(agentId, "fixture", "Agent", false, [], [AgentBridge.CallProtocol]);
 var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var interruptedStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var interruptedReply = new TaskCompletionSource<string>();
 var invocations = 0;
 var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-token", registration, new Chat("selected", "Выбранный чат"),
     async (text, token) =>
@@ -99,6 +102,11 @@ var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-
             started.SetResult();
             await release.Task.WaitAsync(token);
             return "Устаревший ответ";
+        }
+        if (text == "Прерываемая реплика")
+        {
+            interruptedStarted.SetResult();
+            return await interruptedReply.Task;
         }
         Equal("Вторая реплика", text);
         return "Ответ чата";
@@ -131,6 +139,14 @@ Equal(AgentBridge.CallProtocol, say.String("protocolVersion"));
 Equal(secondTurn, say.Field("payload").String("turnId"));
 Equal("Ответ чата", say.Field("payload").String("text"));
 Equal(2, invocations);
+await Send(Event("dialog.user", new { callId, sessionId, turnId = interruptedTurn, text = "Прерываемая реплика" }));
+await interruptedStarted.Task.WaitAsync(ct);
+await Send(Event("call.interrupted", new { callId, reason = "user_speech" }));
+await Send(Event("call.invite", new { callId = new string('f', 32), sessionId = "foreign-session", mode = "conversation" }));
+Equal("call.reject", (await NextControl()).String("type"));
+interruptedReply.SetResult("Этот ответ уже опоздал");
+await Send(Event("call.invite", new { callId = new string('f', 32), sessionId = "foreign-session", mode = "conversation" }));
+Equal("call.reject", (await NextControl()).String("type"));
 Equal("heartbeat", (await Receive()).String("type"));
 await timeout.CancelAsync();
 try { await run; }
@@ -138,7 +154,7 @@ catch (OperationCanceledException) { }
 catch (WebSocketException) when (ct.IsCancellationRequested) { }
 catch (IOException) when (ct.IsCancellationRequested) { }
 catch (NotifyError) when (ct.IsCancellationRequested) { }
-Console.WriteLine("PASS: WebSocket hello, heartbeat, session routing, duplicate turn and stale reply.");
+Console.WriteLine("PASS: WebSocket hello, heartbeat, session routing, duplicate turn, stale reply and interruption.");
 
 var reader = new BoundedLineReader(new MemoryStream("one\r\ntwo\nthree"u8.ToArray()), 5);
 Equal("one", await reader.ReadAsync(CancellationToken.None));
