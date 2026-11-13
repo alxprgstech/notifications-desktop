@@ -7,7 +7,12 @@ $ErrorActionPreference = 'Stop'
 
 function Invoke-Setup([string] $Path, [string] $Arguments, [string] $Label) {
     $log = Join-Path $env:RUNNER_TEMP "notify-$Label.log"
-    $process = Start-Process -FilePath $Path -ArgumentList "$Arguments /LOG=`"$log`"" -WindowStyle Hidden -PassThru -Wait
+    $process = Start-Process -FilePath $Path -ArgumentList "$Arguments /LOG=`"$log`"" -WindowStyle Hidden -PassThru
+    # The update intentionally restarts the tray app, which outlives the installer.
+    if (-not $process.WaitForExit(120000)) {
+        Get-Content -LiteralPath $log -Tail 80 -ErrorAction SilentlyContinue
+        throw "$Label installer process timed out"
+    }
     if ($process.ExitCode -ne 0) {
         Get-Content -LiteralPath $log -Tail 80
         throw "$Label failed ($($process.ExitCode))"
