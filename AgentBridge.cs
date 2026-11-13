@@ -131,7 +131,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                 var assistant = payload.Field("phoneAssistant").ValueKind == JsonValueKind.True;
                 var number = payload.String("extension");
                 var selected = assistant ? phoneDialog : chatDialog;
-                var routeMatches = assistant ? sessionId == PhoneSessionId && PhoneEnabled &&
+                var routeMatches = assistant ? sessionId == PhoneSessionId && (PhoneEnabled || dialog == phoneDialog) &&
                     payload.String("target") == "asterisk" && payload.String("securityLevel") == "standard" &&
                     number is { Length: >= 2 and <= 8 } && number.All(char.IsAsciiDigit)
                     : sessionId is null || sessionId == session.Id;
@@ -158,7 +158,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     payload.String("text") is { Length: > 0 and <= 4000 } text && dialog.Seen.Add(turnId):
                     if (dialog.Phone) PhoneTiming.Mark(callId, turnId, "agent_received");
                     dialog.CancelTurn();
-                    var turn = new Turn(callId, turnId, text, dialog.Interruption.Token);
+                    var turn = new Turn(callId, sessionId, turnId, text, dialog.Interruption.Token);
                     Volatile.Write(ref dialog.Latest, turn);
                     dialog.Turns.Writer.TryWrite(turn);
                     break;
@@ -226,7 +226,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeout.CancelAfter(TimeSpan.FromSeconds(8));
             var frame = reply is null ? value
-                : Call("call.say", new { reply.Turn.CallId, reply.Turn.TurnId, reply.Text });
+                : Call("call.say", new { reply.Turn.CallId, reply.Turn.SessionId, reply.Turn.TurnId, reply.Text });
             await SendAsync(socket, frame, timeout.Token);
             if (reply?.Dialog.Phone == true) PhoneTiming.Mark(reply.Turn.CallId, reply.Turn.TurnId, "agent_reply_sent");
             if (reply is not null) report("Агент на связи · ответ передан");
@@ -288,6 +288,6 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         public void Dispose() => Interruption.Dispose();
     }
 
-    private sealed record Turn(string CallId, string TurnId, string Text, CancellationToken Interruption);
+    private sealed record Turn(string CallId, string? SessionId, string TurnId, string Text, CancellationToken Interruption);
     private sealed record ReplyFrame(DialogState Dialog, Turn Turn, string Text);
 }
