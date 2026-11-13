@@ -126,8 +126,16 @@ if (-not $tray.WaitForExit(20000) -or $tray.ExitCode -ne 0) {
     Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'notify-uninstall.log') -Tail 80 -ErrorAction SilentlyContinue
     throw 'Uninstall did not close the tray process cleanly'
 }
-if ((Test-Path $exe) -or (Test-Path $shortcut) -or (Test-Path $uninstallKey) -or (Test-Path $uninstaller)) {
-    throw 'Uninstall left application files, shortcut or registration'
+# Inno's uninstaller can remove its own executable after the launcher exits.
+$cleanupDeadline = [DateTime]::UtcNow.AddSeconds(20)
+do {
+    $remaining = @($exe, $shortcut, $uninstallKey, $uninstaller) | Where-Object { Test-Path -LiteralPath $_ }
+    if (-not $remaining) { break }
+    Start-Sleep -Milliseconds 200
+} while ([DateTime]::UtcNow -lt $cleanupDeadline)
+if ($remaining) {
+    Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'notify-uninstall.log') -Tail 80 -ErrorAction SilentlyContinue
+    throw "Uninstall left these paths: $($remaining -join ', ')"
 }
 if (Get-ItemProperty -LiteralPath $runKey -Name $runName -ErrorAction SilentlyContinue) {
     throw 'Uninstall left its autostart entry'
