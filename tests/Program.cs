@@ -7,6 +7,21 @@ using System.Text;
 using System.Text.Json;
 using Notify.Desktop;
 
+if (args is ["--visual", var output])
+{
+    Exception? failure = null;
+    var visual = new Thread(() =>
+    {
+        try { VisualSpecs.Capture(output); }
+        catch (Exception error) { failure = error; }
+    });
+    visual.SetApartmentState(ApartmentState.STA);
+    visual.Start();
+    visual.Join();
+    if (failure is not null) System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(failure).Throw();
+    return;
+}
+
 if (args is ["--github-update"])
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));

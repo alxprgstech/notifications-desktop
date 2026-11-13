@@ -20,10 +20,12 @@ public partial class MainWindow : Window
     private bool exiting;
     private bool checking;
 
-    public MainWindow()
+    public MainWindow() : this(visualTest: false) { }
+
+    internal MainWindow(bool visualTest)
     {
         InitializeComponent();
-        try { preferences = LocalSettings.Read(); }
+        try { if (!visualTest) preferences = LocalSettings.Read(); }
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
         { Report("Локальные настройки недоступны."); }
         Origin.Text = preferences.Origin;
@@ -36,7 +38,7 @@ public partial class MainWindow : Window
         DetectClients();
         ContentRendered += async (_, _) =>
         {
-            if (Client.SelectedIndex == 0 && Chats.Items.Count == 0 && Codex.Find() is not null)
+            if (!visualTest && Client.SelectedIndex == 0 && Chats.Items.Count == 0 && Codex.Find() is not null)
                 await WithControlsAsync(LoadChatsAsync);
         };
         Closing += async (_, eventArgs) =>
@@ -57,8 +59,8 @@ public partial class MainWindow : Window
         menu.Items.Add("Выход", null, async (_, _) => await ExitAsync());
         tray = new Forms.NotifyIcon
         {
-            Icon = LoadTrayIcon(), Text = "ALXPRGS Notify Desktop",
-            ContextMenuStrip = menu, Visible = true
+            Icon = visualTest ? null : LoadTrayIcon(), Text = "ALXPRGS Notify Desktop",
+            ContextMenuStrip = menu, Visible = !visualTest
         };
         tray.DoubleClick += (_, _) => ShowWindow();
         tray.BalloonTipClicked += (_, _) => ShowUpdates();
@@ -267,15 +269,18 @@ public partial class MainWindow : Window
     private async Task<Registration> ReadRegistrationAsync(NotifyHttp api, CancellationToken ct)
     {
         NotifyState.Text = "Проверяется…";
+        var started = Stopwatch.GetTimestamp();
         try
         {
             var entry = await api.RegistrationAsync(ct);
             NotifyState.Text = "Доступен";
+            NotifyLatency.Text = $"Время проверки Notify: {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} мс";
             return entry;
         }
         catch (Exception error)
         {
             NotifyState.Text = error is HttpRequestException or OperationCanceledException ? "Недоступен" : "Доступ не подтверждён";
+            NotifyLatency.Text = "Время проверки Notify: нет данных";
             AgentId.Clear();
             SourceId.Clear();
             throw;
@@ -303,7 +308,7 @@ public partial class MainWindow : Window
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(35));
         try { await action(timeout.Token); }
-        catch (Exception error) { Report(Friendly(error)); }
+        catch (Exception error) { Report(Friendly(error), "Ошибка"); }
         finally { Setup.IsEnabled = true; checking = false; }
     }
 
@@ -360,12 +365,14 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
-    private void Report(string message)
+    private void Report(string message) => Report(message, "Сведения");
+
+    private void Report(string message, string level)
     {
-        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => Report(message)); return; }
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => Report(message, level)); return; }
         Status.Text = message;
-        history.Enqueue($"{DateTime.Now:HH:mm:ss}   {message}");
-        while (history.Count > 5) history.Dequeue();
+        history.Enqueue($"{DateTime.Now:HH:mm:ss} · {level} · {message}");
+        while (history.Count > 15) history.Dequeue();
         History.Text = string.Join(Environment.NewLine, history.Reverse());
     }
 

@@ -14,6 +14,13 @@ public partial class MainWindow
     private bool agentConnected;
     private bool codexReplying;
 
+    internal void SetVisualTheme(string theme)
+    {
+        preferences = preferences with { Theme = theme };
+        ApplyTheme();
+        RefreshPhoneStatus();
+    }
+
     private void InitializePresentation()
     {
         Appearance.SelectedIndex = preferences.Theme switch { "Light" => 1, "Dark" => 2, _ => 0 };

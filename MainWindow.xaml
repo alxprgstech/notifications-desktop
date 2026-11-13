@@ -22,7 +22,31 @@
       <Setter Property="TextWrapping" Value="Wrap"/>
       <Setter Property="Foreground" Value="{DynamicResource SecondaryText}"/>
     </Style>
-    <Style x:Key="AccentButton" TargetType="Button">
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="{DynamicResource Surface}"/>
+      <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Outline}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonTile" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonTile" Property="Opacity" Value=".85"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonTile" Property="Opacity" Value=".7"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonTile" Property="BorderBrush" Value="{DynamicResource AccentFill}"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonTile" Property="Opacity" Value=".52"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="Background" Value="{DynamicResource AccentFill}"/>
       <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
       <Setter Property="Padding" Value="14,7"/>
@@ -58,7 +82,7 @@
       <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
     </DataTemplate>
   </Window.Resources>
-  <Grid>
+  <Grid Background="{DynamicResource AppBackground}">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
@@ -144,12 +168,19 @@
         <StackPanel x:Name="ConnectionsPage" Visibility="Collapsed">
           <TextBlock Text="Подключения" Style="{StaticResource PageTitle}"/>
           <TextBlock Text="Укажите источник Notify и выберите клиент разговора." Style="{StaticResource Description}" Margin="0,0,0,20"/>
-          <Border Style="{StaticResource Card}">
-        <StackPanel x:Name="Setup">
+          <StackPanel x:Name="Setup">
+          <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <StackPanel>
+          <TextBlock Text="Сервер и доступ" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="HTTPS-адрес Notify" Margin="0,0,0,5"/>
           <TextBox x:Name="Origin" Margin="0,0,0,11" AutomationProperties.Name="HTTPS-адрес Notify"/>
           <TextBlock x:Name="TokenLabel" Text="Токен источника" Margin="0,0,0,5"/>
           <PasswordBox x:Name="Token" Margin="0,0,0,11" AutomationProperties.Name="Токен источника"/>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <StackPanel>
+          <TextBlock Text="Клиент и чат" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Клиент" Margin="0,0,0,5"/>
           <ComboBox x:Name="Client" SelectedIndex="0" SelectionChanged="ClientChanged"
                     AutomationProperties.Name="Клиент" Padding="8,5" Margin="0,0,0,11">
@@ -169,14 +200,16 @@
                          Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
             </DockPanel>
           </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}">
           <WrapPanel>
             <Button Content="Подключить" Click="Connect" Style="{StaticResource AccentButton}" FontWeight="SemiBold"/>
             <Button Content="Проверить соединение" Click="Check"/>
             <Button Content="Кабинет Notify" Click="OpenCabinet"/>
           </WrapPanel>
-        </StackPanel>
-
           </Border>
+          </StackPanel>
         </StackPanel>
         <StackPanel x:Name="DiagnosticsPage" Visibility="Collapsed">
           <TextBlock Text="Диагностика" Style="{StaticResource PageTitle}"/>
@@ -199,7 +232,14 @@
           </Border>
           <Border Style="{StaticResource Card}">
             <StackPanel>
-              <TextBlock Text="Последние события" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <TextBlock Text="Состояние подсистем" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=NotifyState, StringFormat='Сервер Notify: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=SocketState, StringFormat='Соединение агента: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=CodexState, StringFormat='Codex: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=HarnessState, StringFormat='Harness: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=PhoneHomeState, StringFormat='Телефонный помощник: {0}'}"/>
+              <TextBlock x:Name="NotifyLatency" Style="{StaticResource Description}" Text="Время проверки Notify: нет данных"/>
+              <TextBlock Text="Последние события" FontSize="19" FontWeight="SemiBold" Margin="0,14,0,8"/>
               <TextBlock x:Name="History" Text="Событий пока нет." Style="{StaticResource Description}" LineHeight="23"/>
             </StackPanel>
           </Border>
