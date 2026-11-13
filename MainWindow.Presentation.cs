@@ -13,6 +13,7 @@ public partial class MainWindow
     private bool presentationReady;
     private bool agentConnected;
     private bool codexReplying;
+    private string? codexFailure;
 
     internal void SetVisualTheme(string theme)
     {
@@ -141,8 +142,8 @@ public partial class MainWindow
     private void UpdateClientStates()
     {
         var active = bridgeCancellation is not null && preferences.Client == "Codex" ? preferences.Chat : null;
-        CodexState.Text = active is not null ? codexReplying ? "Отвечает" : "Готов"
-            : codexInstalled ? "Чат не подключён" : "Недоступен";
+        CodexState.Text = codexReplying ? "Отвечает" : codexFailure ??
+            (active is not null ? "Готов" : codexInstalled ? "Чат не подключён" : "Недоступен");
         CurrentCodexChat.Text = active is null ? "" : $"Текущий чат: {active.Name}";
         HarnessState.Text = agentConnected && preferences.Client == "Harness"
             ? "Подключён"
@@ -151,19 +152,26 @@ public partial class MainWindow
 
     private async Task<string> ReplyToCodexAsync(Codex codex, Chat chat, string text, CancellationToken lifetime, CancellationToken ct)
     {
-        SetReplying(true);
+        string? failure = null;
+        SetReplying(true, null);
         try
         {
             var extra = Volatile.Read(ref effectiveChatInstructions);
             var prompt = extra is null ? text : $"Мои инструкции для этого ответа:\n{extra}\n\nМой запрос:\n{text}";
             return await codex.ReplyAsync(chat, prompt, ct);
         }
-        finally { SetReplying(false); }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            failure = "Недоступен";
+            throw;
+        }
+        finally { SetReplying(false, failure); }
 
-        void SetReplying(bool value) => Dispatcher.BeginInvoke(() =>
+        void SetReplying(bool value, string? state) => Dispatcher.BeginInvoke(() =>
         {
             if (lifetime.IsCancellationRequested) return;
             codexReplying = value;
+            codexFailure = state;
             UpdateClientStates();
         });
     }

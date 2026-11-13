@@ -169,6 +169,11 @@ public partial class MainWindow : Window
             catch (NotifyError error)
             {
                 ChatStatus.Text = error.Message;
+                if (bridgeCancellation is null)
+                {
+                    codexFailure = error.Message == Codex.SignInRequired ? "Не авторизован" : "Недоступен";
+                    UpdateClientStates();
+                }
                 throw;
             }
             ChatStatus.Text = "Чат доступен для подключения.";
@@ -331,6 +336,7 @@ public partial class MainWindow : Window
         }
         agentConnected = false;
         codexReplying = false;
+        codexFailure = null;
         phoneReady = false;
         phoneActive = false;
         phoneFailed = false;

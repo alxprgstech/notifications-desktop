@@ -6,6 +6,7 @@ internal sealed class Codex(string executable)
 {
     private const string ChatInUse = "Этот чат открыт в другом процессе Codex. Освободите чат или выберите другой и нажмите «Подключить».";
     private const string ChatUnavailable = "Этот чат недоступен локальному Codex. Выберите другой сохранённый чат.";
+    internal const string SignInRequired = "Войдите в Codex CLI и повторите подключение.";
 
     internal static string? Find()
     {
@@ -44,7 +45,12 @@ internal sealed class Codex(string executable)
         try
         {
             await InitializeAsync(process, ct);
-            await ResumeChatAsync(process, chat, 2, ct);
+            await WriteAsync(process, new { id = 2, method = "account/read", @params = new { refreshToken = false } }, ct);
+            var account = await ReadResultAsync(process, 2, ct);
+            if (account.Field("requiresOpenaiAuth").ValueKind == JsonValueKind.True &&
+                account.Field("account").ValueKind != JsonValueKind.Object)
+                throw new NotifyError(SignInRequired);
+            await ResumeChatAsync(process, chat, 3, ct);
         }
         finally
         {
