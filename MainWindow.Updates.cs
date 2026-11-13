@@ -169,25 +169,35 @@ internal sealed class CallActivity
     private readonly object gate = new();
     private int active;
     private bool stopping;
+    private bool maintaining;
     internal bool Active { get { lock (gate) return active != 0; } }
 
     internal bool TryEnter()
     {
         lock (gate)
         {
-            if (stopping) return false;
+            if (stopping || maintaining) return false;
             active++;
             return true;
         }
     }
 
     internal void Leave() { lock (gate) active--; }
+    internal bool TryMaintain()
+    {
+        lock (gate)
+        {
+            if (active != 0 || stopping || maintaining) return false;
+            return maintaining = true;
+        }
+    }
+    internal void EndMaintenance() { lock (gate) maintaining = false; }
 
     internal bool TryStop()
     {
         lock (gate)
         {
-            if (active != 0) return false;
+            if (active != 0 || maintaining) return false;
             stopping = true;
             return true;
         }

@@ -99,14 +99,14 @@
             <Border Style="{StaticResource Card}" Margin="0,0,6,12">
               <StackPanel>
                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE753;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="Notify" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
+                <TextBlock Text="Сервер Notify" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
                 <TextBlock x:Name="NotifyState" Text="Не проверен" Style="{StaticResource Description}"/>
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Margin="6,0,0,12">
               <StackPanel>
                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE774;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="WebSocket агента" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,9,0,3"/>
+                <TextBlock Text="Соединение агента" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,9,0,3"/>
                 <TextBlock x:Name="SocketState" Text="Отключён" Style="{StaticResource Description}"/>
               </StackPanel>
             </Border>
@@ -115,6 +115,7 @@
                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE756;" Foreground="{DynamicResource AccentDetail}"/>
                 <TextBlock Text="Codex" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
                 <TextBlock x:Name="CodexState" Style="{StaticResource Description}"/>
+                <TextBlock x:Name="CurrentCodexChat" Style="{StaticResource Description}"/>
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Margin="6,0,0,12">
@@ -125,6 +126,15 @@
               </StackPanel>
             </Border>
           </UniformGrid>
+          <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <StackPanel>
+              <TextBlock Text="Телефонный помощник · 7820" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+              <TextBlock x:Name="PhoneHomeState" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock x:Name="PhoneHomeContext" Style="{StaticResource Description}"/>
+              <ProgressBar x:Name="PhoneContextMeter" Maximum="100" Height="5" Margin="0,8,0,0" Visibility="Collapsed"
+                           AutomationProperties.Name="Заполнение контекста телефонного чата"/>
+            </StackPanel>
+          </Border>
           <WrapPanel Margin="0,6,0,0">
             <Button Content="Настроить подключение" Click="OpenConnections" Style="{StaticResource AccentButton}" Margin="0,0,8,8"/>
             <Button x:Name="Stop" Content="Отключить" IsEnabled="False" Click="Disconnect" Margin="0,0,8,8"/>
@@ -221,6 +231,26 @@
               <TextBlock x:Name="PhoneAssistantStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
               <TextBlock x:Name="PhoneAssistantCall" Style="{StaticResource Description}" Margin="0,4,0,0"/>
               <CheckBox x:Name="PhoneAssistantEnabled" Content="Включить телефонного помощника" Click="ChangePhoneMode" Margin="0,8,0,0"/>
+              <Button Content="Создать новый телефонный чат" Click="NewPhoneThread" Margin="0,8,0,0"/>
+              <Button Content="Сжать контекст текущего чата" Click="CompactPhoneThread" Margin="0,8,0,0"/>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="Контекст и инструкции Codex" FontSize="19" FontWeight="SemiBold"/>
+              <TextBlock Text="Порог переноса после звонка (70–100 %)"/>
+              <TextBox x:Name="RolloverPercent" AutomationProperties.Name="Порог переноса в процентах"/>
+              <TextBlock Text="Общие инструкции"/>
+              <TextBox x:Name="GeneralInstructions" AutomationProperties.Name="Общие инструкции" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
+              <TextBlock Text="Телефонный помощник"/>
+              <TextBox x:Name="PhoneInstructions" AutomationProperties.Name="Инструкции телефонного помощника" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
+              <TextBlock Text="Обычный чат"/>
+              <TextBox x:Name="ChatInstructions" AutomationProperties.Name="Инструкции обычного чата" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
+              <WrapPanel Margin="0,8,0,0">
+                <Button Content="Сохранить" Click="SaveInstructions"/>
+                <Button Content="Предпросмотр" Click="PreviewInstructions"/>
+                <Button Content="Сбросить" Click="ResetInstructions"/>
+              </WrapPanel>
             </StackPanel>
           </Border>
           <Border Style="{StaticResource Card}" Margin="0,12,0,0">

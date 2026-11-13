@@ -26,7 +26,7 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
             certificate?.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256) == certificateHash }
     });
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20));
-    using var assistant = new PhoneCodex(new Codex(Codex.Find()!), Path.Combine(LocalSettings.DirectoryPath, "phone-assistant"));
+    await using var assistant = new PhoneCodex(new Codex(Codex.Find()!), Path.Combine(LocalSettings.DirectoryPath, "phone-assistant"));
     await assistant.WarmAsync(deadline.Token);
     await new AgentBridge(new Uri(labOrigin), token, new Registration(labAgentId, "", "Phone lab", false, [], []),
         new Chat(AgentBridge.PhoneSessionId, PhoneCodex.Name), (_, _) => throw new InvalidOperationException(),
@@ -42,7 +42,7 @@ if (args is ["--phone-codex"])
     string? threadId = null;
     for (var session = 0; session < 2; session++)
     {
-        using var assistant = new PhoneCodex(codex, directory);
+        await using var assistant = new PhoneCodex(codex, directory);
         await assistant.WarmAsync(deadline.Token);
         var saved = File.ReadAllText(Path.Combine(directory, "thread-id"));
         threadId ??= saved;
@@ -56,6 +56,25 @@ if (args is ["--phone-codex"])
     Console.WriteLine("PASS: ChatGPT account, App Server reply and dedicated thread restored after process restart.");
     return;
 }
+
+using (var fixture = JsonDocument.Parse("""{"total":{"totalTokens":250000},"last":{"totalTokens":85000},"modelContextWindow":100000}"""))
+{
+    var usage = PhoneUsage.Read(fixture.RootElement);
+    if (usage.Total != 250000 || usage.Percent != 85)
+        throw new Exception("Cumulative usage must never drive the phone context threshold.");
+}
+using (var fixture = JsonDocument.Parse("""{"total":{"totalTokens":250000},"last":{"totalTokens":85000},"modelContextWindow":null}"""))
+    if (PhoneUsage.Read(fixture.RootElement).Percent is not null)
+        throw new Exception("Missing model context window must disable automatic rollover.");
+var maintenance = new CallActivity();
+if (!maintenance.TryEnter() || maintenance.TryMaintain())
+    throw new Exception("Phone maintenance must not start during an active call.");
+maintenance.Leave();
+if (!maintenance.TryMaintain() || maintenance.TryEnter() || maintenance.TryStop())
+    throw new Exception("Calls and installation must wait during phone maintenance.");
+maintenance.EndMaintenance();
+if (!maintenance.TryEnter()) throw new Exception("Calls must resume after phone maintenance.");
+maintenance.Leave();
 
 await UpdateSpecs.RunAsync();
 

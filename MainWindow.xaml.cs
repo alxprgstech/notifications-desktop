@@ -32,6 +32,7 @@ public partial class MainWindow : Window
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
         AutoStart.IsChecked = run?.GetValue(RunValue) is string;
         InitializePresentation();
+        LoadInstructions();
         DetectClients();
         ContentRendered += async (_, _) =>
         {
@@ -198,7 +199,7 @@ public partial class MainWindow : Window
             try
             {
                 if (codex is not null && chat is not null)
-                    await RunBridgeAsync(chat, (text, cancellation) => codex.ReplyAsync(chat, text, cancellation), lifetime.Token);
+                    await RunBridgeAsync(chat, (text, cancellation) => ReplyToCodexAsync(codex, chat, text, lifetime.Token, cancellation), lifetime.Token);
                 else
                     await new HarnessLink(Report).RunAsync(RunBridgeAsync, lifetime.Token);
             }
@@ -219,8 +220,10 @@ public partial class MainWindow : Window
         async Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation)
         {
             var executable = Codex.Find();
-            using var phone = executable is null ? null :
-                new PhoneCodex(new Codex(executable), PhoneDirectory);
+            await using var phone = executable is null ? null :
+                new PhoneCodex(new Codex(executable), PhoneDirectory, usage => ShowPhoneUsage(cancellation, usage),
+                    () => Volatile.Read(ref effectivePhoneInstructions));
+            Volatile.Write(ref activePhone, phone);
             using var warmupLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
             var warmup = phone is null ? Task.CompletedTask : WarmPhoneAsync(phone, warmupLifetime.Token);
             try
@@ -230,10 +233,12 @@ public partial class MainWindow : Window
                     enterCall: callActivity.TryEnter, leaveCall: CallFinished,
                     phoneReply: phone is null ? null : phone.ReplyAsync,
                     phoneEnabled: () => Volatile.Read(ref phoneEnabled),
-                    phoneState: (number, active) => ShowPhoneCall(cancellation, number, active)).RunAsync(cancellation);
+                    phoneState: (number, active) => ShowPhoneCall(cancellation, number, active),
+                    phoneReady: () => phone?.Ready == true).RunAsync(cancellation);
             }
             finally
             {
+                Volatile.Write(ref activePhone, null);
                 await warmupLifetime.CancelAsync();
                 await warmup;
             }
@@ -261,16 +266,16 @@ public partial class MainWindow : Window
 
     private async Task<Registration> ReadRegistrationAsync(NotifyHttp api, CancellationToken ct)
     {
-        NotifyState.Text = "Проверяем регистрацию…";
+        NotifyState.Text = "Проверяется…";
         try
         {
             var entry = await api.RegistrationAsync(ct);
-            NotifyState.Text = "Регистрация подтверждена";
+            NotifyState.Text = "Доступен";
             return entry;
         }
         catch (Exception error)
         {
-            NotifyState.Text = Friendly(error);
+            NotifyState.Text = error is HttpRequestException or OperationCanceledException ? "Недоступен" : "Доступ не подтверждён";
             AgentId.Clear();
             SourceId.Clear();
             throw;
@@ -319,6 +324,13 @@ public partial class MainWindow : Window
             stoppingBridge = null;
             cancellation.Dispose();
         }
+        agentConnected = false;
+        codexReplying = false;
+        phoneReady = false;
+        phoneActive = false;
+        phoneFailed = false;
+        PhoneHomeContext.Text = "";
+        PhoneContextMeter.Visibility = Visibility.Collapsed;
         RefreshPhoneStatus();
         PhoneAssistantCall.Text = "";
         SocketState.Text = "Отключён";

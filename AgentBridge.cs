@@ -9,7 +9,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     Func<string, CancellationToken, Task<string>> reply, Action<string> report, HttpMessageInvoker? transport = null,
     Action<BridgeConnection>? connectionChanged = null, Func<bool>? enterCall = null, Action? leaveCall = null,
     Func<string, string, string, CancellationToken, Task<string>>? phoneReply = null,
-    Func<bool>? phoneEnabled = null, Action<string, bool>? phoneState = null)
+    Func<bool>? phoneEnabled = null, Action<string, bool>? phoneState = null, Func<bool>? phoneReady = null)
 {
     internal const string PhoneSessionId = "notify-phone-assistant";
     private const string Protocol = "alxprgs.notify.agent.v1";
@@ -131,7 +131,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                 var assistant = payload.Field("phoneAssistant").ValueKind == JsonValueKind.True;
                 var number = payload.String("extension");
                 var selected = assistant ? phoneDialog : chatDialog;
-                var routeMatches = assistant ? sessionId == PhoneSessionId && (PhoneEnabled || dialog == phoneDialog) &&
+                var routeMatches = assistant ? sessionId == PhoneSessionId &&
+                    (dialog == phoneDialog || (PhoneEnabled && (phoneReady?.Invoke() ?? true))) &&
                     payload.String("target") == "asterisk" && payload.String("securityLevel") == "standard" &&
                     number is { Length: >= 2 and <= 8 } && number.All(char.IsAsciiDigit)
                     : sessionId is null || sessionId == session.Id;
@@ -178,8 +179,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         if (dialog.CallId is null) return;
         dialog.CallId = null;
         dialog.CancelTurn();
-        if (dialog.Phone) phoneState?.Invoke(dialog.Extension!, false);
         leaveCall?.Invoke();
+        if (dialog.Phone) phoneState?.Invoke(dialog.Extension!, false);
     }
 
     private async Task ReplyLoopAsync(DialogState dialog, ChannelWriter<object> outbound, CancellationToken ct)

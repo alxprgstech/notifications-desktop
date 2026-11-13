@@ -8,7 +8,8 @@ internal sealed record Chat(string Id, string Name, string? Directory = null)
     public override string ToString() => Name;
 }
 
-internal sealed record Preferences(string Origin = "https://notify.alxprgs.tech", string Client = "Codex", Chat? Chat = null, string Theme = "System", bool KeepInTray = true, bool PhoneEnabled = false);
+internal sealed record Preferences(string Origin = "https://notify.alxprgs.tech", string Client = "Codex", Chat? Chat = null, string Theme = "System", bool KeepInTray = true, bool PhoneEnabled = false,
+    string GeneralInstructions = "", string PhoneInstructions = "", string ChatInstructions = "", int PhoneRolloverPercent = 85);
 internal sealed record Registration(string AgentId, string SourceId, string Name, bool Online, string[] Capabilities, string[] SupportedCallProtocols);
 
 internal static class LocalSettings
