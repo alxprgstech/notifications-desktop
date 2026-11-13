@@ -18,18 +18,19 @@ internal static class LocalSettings
     internal static readonly string DirectoryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ALXPRGS", "Notify Desktop");
 
-    private static string SettingsPath => Path.Combine(DirectoryPath, "settings.json");
-    private static string TokenPath => Path.Combine(DirectoryPath, "source.dpapi");
     private sealed record Credential(string Origin, string Token);
 
-    internal static Preferences Read() => File.Exists(SettingsPath)
-        ? JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(SettingsPath), Json) ?? new()
-        : new();
-
-    internal static string? ReadToken(Uri origin)
+    internal static Preferences Read(string? directory = null)
     {
-        if (!File.Exists(TokenPath)) return null;
-        var bytes = ProtectedData.Unprotect(File.ReadAllBytes(TokenPath), null, DataProtectionScope.CurrentUser);
+        var path = Path.Combine(directory ?? DirectoryPath, "settings.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(path), Json) ?? new() : new();
+    }
+
+    internal static string? ReadToken(Uri origin, string? directory = null)
+    {
+        var path = Path.Combine(directory ?? DirectoryPath, "source.dpapi");
+        if (!File.Exists(path)) return null;
+        var bytes = ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
         try
         {
             var credential = JsonSerializer.Deserialize<Credential>(bytes, Json);
@@ -38,14 +39,15 @@ internal static class LocalSettings
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
-    internal static void Save(Preferences preferences, string? token = null)
+    internal static void Save(Preferences preferences, string? token = null, string? directory = null)
     {
-        Directory.CreateDirectory(DirectoryPath);
+        directory ??= DirectoryPath;
+        Directory.CreateDirectory(directory);
         if (token != null)
         {
-            WriteToken(TokenPath, preferences.Origin, token);
+            WriteToken(Path.Combine(directory, "source.dpapi"), preferences.Origin, token);
         }
-        Write(SettingsPath, JsonSerializer.SerializeToUtf8Bytes(preferences, Json));
+        Write(Path.Combine(directory, "settings.json"), JsonSerializer.SerializeToUtf8Bytes(preferences, Json));
     }
 
     private static void WriteToken(string path, string origin, string token)

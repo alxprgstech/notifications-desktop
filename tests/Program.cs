@@ -143,6 +143,40 @@ if (maintenance.Busy) throw new Exception("Installation must resume after phone 
 if (!maintenance.TryEnter()) throw new Exception("Calls must resume after phone maintenance.");
 maintenance.Leave();
 
+using (var storage = new System.IO.FileStream(Path.GetTempFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None, 4096, FileOptions.DeleteOnClose))
+{
+    var directory = storage.Name + ".settings";
+    Directory.CreateDirectory(directory);
+    try
+    {
+        const string origin = "https://notify.example.invalid";
+        const string synthetic = "synthetic-settings-spec-token";
+        var uri = new Uri(origin);
+        LocalSettings.Save(new Preferences(Origin: origin), synthetic, directory);
+        File.WriteAllText(Path.Combine(directory, "settings.json"), """{"origin":"https://notify.example.invalid","theme":"Dark"}""");
+        var original = LocalSettings.Read(directory);
+        Equal("Dark", original.Theme);
+        Equal(85, original.PhoneRolloverPercent);
+        var credential = Path.Combine(directory, "source.dpapi");
+        var protectedBefore = File.ReadAllBytes(credential);
+        var updated = original with { PhoneEnabled = true, PhoneRolloverPercent = 90,
+            GeneralInstructions = "Общие", PhoneInstructions = "Телефон", ChatInstructions = "Чат" };
+        LocalSettings.Save(updated, directory: directory);
+        Equal(updated, LocalSettings.Read(directory));
+        if (!protectedBefore.SequenceEqual(File.ReadAllBytes(credential)) ||
+            LocalSettings.ReadToken(uri, directory) != synthetic ||
+            LocalSettings.ReadToken(new Uri("https://other.example.invalid"), directory) is not null)
+            throw new Exception("Saving instructions must preserve the origin-bound DPAPI credential.");
+        Console.WriteLine("PASS: legacy settings, instruction round trip and DPAPI preservation.");
+    }
+    finally
+    {
+        File.Delete(Path.Combine(directory, "settings.json"));
+        File.Delete(Path.Combine(directory, "source.dpapi"));
+        Directory.Delete(directory);
+    }
+}
+
 await UpdateSpecs.RunAsync();
 
 if (args is ["--wss-soak"])
