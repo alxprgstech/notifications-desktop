@@ -49,6 +49,44 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
     return;
 }
 
+if (args is ["--phone-context", var labRoot])
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(4));
+    var labCancellation = deadline.Token;
+    var directory = Path.Combine(Path.GetFullPath(labRoot), Guid.NewGuid().ToString("N"));
+    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."));
+    PhoneUsage? usage = null;
+    await using var assistant = new PhoneCodex(codex, directory, value => usage = value,
+        () => "Запоминай предпочтения собеседника.");
+    await assistant.WarmAsync(labCancellation);
+    var threadFile = Path.Combine(directory, "thread-id");
+    var original = await File.ReadAllTextAsync(threadFile, labCancellation);
+    await Ask("Мой любимый фрукт — манго. Запомни это предпочтение.");
+    if (usage is not { Total: > 0, Context: > 0, Window: > 0 })
+        throw new Exception("Codex did not supply usable context telemetry.");
+    Console.WriteLine("PASS: live context telemetry.");
+    await assistant.RolloverAsync(preserveContext: true, labCancellation);
+    var replacement = await File.ReadAllTextAsync(threadFile, labCancellation);
+    if (original == replacement) throw new Exception("The persistent phone chat did not change.");
+    await RequirePreference();
+    Console.WriteLine("PASS: rollover preserved the synthetic fact and changed the persistent thread.");
+    await assistant.CompactAsync(labCancellation);
+    Equal(replacement, await File.ReadAllTextAsync(threadFile, labCancellation));
+    await RequirePreference();
+    Console.WriteLine("PASS: compaction preserved the synthetic fact and persistent thread ID.");
+    return;
+
+    Task<string> Ask(string prompt) => assistant.ReplyAsync(
+        Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"), prompt, labCancellation);
+
+    async Task RequirePreference()
+    {
+        var reply = await Ask("Какой фрукт я назвал любимым?");
+        if (!reply.Contains("манго", StringComparison.OrdinalIgnoreCase))
+            throw new Exception("The synthetic preference was not retained.");
+    }
+}
+
 if (args is ["--phone-codex"])
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
