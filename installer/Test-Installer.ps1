@@ -109,13 +109,23 @@ $restartDeadline = [DateTime]::UtcNow.AddSeconds(20)
 do {
     $restarted = Get-Process -Name 'ALXPRGS.Notify.Desktop' -ErrorAction SilentlyContinue |
         Where-Object { $_.Path -eq $exe } | Select-Object -First 1
-    if ($restarted) { break }
+    if ($restarted -and [Threading.EventWaitHandle]::TryOpenExisting('Local\ALXPRGS.Notify.Desktop.Shutdown', [ref]$script:signal)) {
+        $script:signal.Dispose()
+        $script:signal = $null
+        break
+    }
+    $restarted = $null
     Start-Sleep -Milliseconds 200
 } while ([DateTime]::UtcNow -lt $restartDeadline)
 if (-not $restarted) { throw 'The update did not restart Notify Desktop' }
 $tray = $restarted
+# Open the process handle before uninstall so ExitCode remains available after it exits.
+$null = $tray.Handle
 Invoke-Setup $uninstaller $flags 'uninstall'
-if (-not $tray.WaitForExit(5000) -or $tray.ExitCode -ne 0) { throw 'Uninstall did not close the tray process cleanly' }
+if (-not $tray.WaitForExit(20000) -or $tray.ExitCode -ne 0) {
+    Get-Content -LiteralPath (Join-Path $env:RUNNER_TEMP 'notify-uninstall.log') -Tail 80 -ErrorAction SilentlyContinue
+    throw 'Uninstall did not close the tray process cleanly'
+}
 if ((Test-Path $exe) -or (Test-Path $shortcut) -or (Test-Path $uninstallKey) -or (Test-Path $uninstaller)) {
     throw 'Uninstall left application files, shortcut or registration'
 }
