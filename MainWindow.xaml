@@ -28,6 +28,7 @@
       <Setter Property="Padding" Value="14,7"/>
     </Style>
     <Style x:Key="NavItem" TargetType="RadioButton">
+      <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
       <Setter Property="FontSize" Value="14"/>
       <Setter Property="Padding" Value="0"/>
       <Setter Property="Margin" Value="0,0,5,4"/>
@@ -36,7 +37,7 @@
           <ControlTemplate TargetType="RadioButton">
             <Border x:Name="Tile" Padding="12,8" CornerRadius="6" BorderThickness="1"
                     BorderBrush="Transparent" Background="Transparent">
-              <ContentPresenter/>
+              <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}"/>
             </Border>
             <ControlTemplate.Triggers>
               <Trigger Property="IsMouseOver" Value="True">
