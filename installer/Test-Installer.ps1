@@ -22,7 +22,7 @@ function Assert-InstalledVersion([string] $Expected) {
     if (-not (Test-Path -LiteralPath $shortcut -PathType Leaf)) { throw 'Start menu shortcut is missing' }
     $entry = Get-ItemProperty -LiteralPath $uninstallKey
     if ($entry.DisplayVersion -ne $Expected -or $entry.DisplayName -ne 'ALXPRGS Notify Desktop') {
-        throw 'Unexpected installed-apps registration'
+        throw "Unexpected installed-apps registration: $($entry.DisplayName), version $($entry.DisplayVersion)"
     }
     if (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf)) { throw 'Uninstaller is missing' }
     if (Get-ChildItem -LiteralPath $directory -Recurse -File -Include *.pdb,*.cs,*.csproj,*.dpapi,*Specs* ) {

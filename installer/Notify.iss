@@ -26,6 +26,7 @@ ArchitecturesAllowed=x64os
 ArchitecturesInstallIn64BitMode=x64os
 MinVersion=10.0.22000
 SetupIconFile=..\Assets\Notify.ico
+UninstallDisplayName={#AppName}
 UninstallDisplayIcon={app}\{#AppExe}
 WizardStyle=modern
 Compression=lzma2
