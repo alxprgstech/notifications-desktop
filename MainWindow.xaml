@@ -83,7 +83,7 @@
                        AutomationProperties.Name="Диагностика">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" Margin="0,0,8,0"/><TextBlock Text="Диагностика"/></StackPanel>
           </RadioButton>
-          <RadioButton Style="{StaticResource NavItem}" GroupName="Pages" Tag="3" Checked="Navigate"
+          <RadioButton x:Name="SettingsNav" Style="{StaticResource NavItem}" GroupName="Pages" Tag="3" Checked="Navigate"
                        AutomationProperties.Name="Настройки">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE713;" Margin="0,0,8,0"/><TextBlock Text="Настройки"/></StackPanel>
           </RadioButton>
@@ -213,6 +213,38 @@
               <CheckBox x:Name="AutoStart" Content="Запускать в трее при входе в Windows" Margin="0,0,0,9" Click="ChangeStartup"/>
               <CheckBox x:Name="KeepInTray" Content="Оставлять приложение в трее при закрытии окна" Click="ChangeBackground"/>
               <TextBlock Text="В трее агент остаётся на связи. Для полного завершения используйте «Выход»." Style="{StaticResource Description}" Margin="0,9,0,0"/>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="Телефонный помощник" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,10"/>
+              <TextBlock x:Name="PhoneAssistantStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock x:Name="PhoneAssistantCall" Style="{StaticResource Description}" Margin="0,4,0,0"/>
+              <TextBlock Text="Токен отдельного источника Notify" Style="{StaticResource Description}" Margin="0,8,0,4"/>
+              <PasswordBox x:Name="PhoneAssistantToken" MaxLength="512" AutomationProperties.Name="Токен телефонного помощника"/>
+              <WrapPanel Margin="0,8,0,0">
+                <Button Content="Включить помощника" Click="EnablePhone"/>
+                <Button Content="Отключить помощника" Click="DisablePhone"/>
+              </WrapPanel>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="Обновления" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,10"/>
+              <TextBlock x:Name="UpdateStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
+              <WrapPanel Margin="0,8,0,0">
+                <Button Content="Проверить обновления" Click="CheckUpdates"/>
+                <Button x:Name="CancelDownload" Content="Отменить" Click="CancelUpdate" IsEnabled="False"/>
+              </WrapPanel>
+              <StackPanel x:Name="UpdateOffer" Visibility="Collapsed" Margin="0,8,0,0">
+                <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
+                  <TextBlock x:Name="UpdateNotes" Style="{StaticResource Description}"/>
+                </ScrollViewer>
+                <WrapPanel Margin="0,8,0,0">
+                  <Button Content="Установить" Click="InstallUpdate" Style="{StaticResource AccentButton}"/>
+                  <Button Content="Позже" Click="DismissUpdate"/>
+                </WrapPanel>
+              </StackPanel>
             </StackPanel>
           </Border>
         </StackPanel>

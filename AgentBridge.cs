@@ -7,8 +7,10 @@ internal enum BridgeConnection { Connecting, Connected, Reconnecting }
 
 internal sealed class AgentBridge(Uri origin, string token, Registration registration, Chat chat,
     Func<string, CancellationToken, Task<string>> reply, Action<string> report, HttpMessageInvoker? transport = null,
-    Action<BridgeConnection>? connectionChanged = null)
+    Action<BridgeConnection>? connectionChanged = null, Func<bool>? enterCall = null, Action? leaveCall = null,
+    PhoneCodex? phone = null, Action<string, bool>? phoneState = null)
 {
+    internal const string PhoneSessionId = "notify-phone-assistant";
     private const string Protocol = "alxprgs.notify.agent.v1";
     internal const string CallProtocol = "alxprgs.notify.call.v2";
     private const int MaxMessage = 64 * 1024;
@@ -27,6 +29,12 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         {
             try
             {
+                if (phone is { Ready: false })
+                {
+                    using var warmup = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                    warmup.CancelAfter(TimeSpan.FromSeconds(60));
+                    await phone.WarmAsync(warmup.Token);
+                }
                 connectionChanged?.Invoke(BridgeConnection.Connecting);
                 report("Подключение к Notify…");
                 await ConnectAsync(() =>
@@ -67,7 +75,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     {
         using var opening = CancellationTokenSource.CreateLinkedTokenSource(ct);
         opening.CancelAfter(TimeSpan.FromSeconds(15));
-        var sessions = new[] { new { id = session.Id, name = session.Name } };
+        var sessions = phone is null ? new[] { new { id = session.Id, name = session.Name } } :
+            new[] { new { id = PhoneSessionId, name = PhoneCodex.Name } };
         await SendAsync(socket, new
         {
             type = "hello", protocolVersion = Protocol, eventId = Id(), agentId = registration.AgentId,
@@ -110,8 +119,23 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         ChannelWriter<Turn> turns, DialogState dialog, CancellationToken ct)
     {
         string? acceptedCall = null;
-        while (!ct.IsCancellationRequested)
+        var phoneCall = false;
+        var extension = "";
+        using var interruption = new DialogInterruption();
+        try
         {
+            await ReadCallsAsync();
+        }
+        finally
+        {
+            if (phoneCall) phoneState?.Invoke(extension, false);
+            if (acceptedCall is not null) leaveCall?.Invoke();
+        }
+
+        async Task ReadCallsAsync()
+        {
+          while (!ct.IsCancellationRequested)
+          {
             var frame = await ReceiveAsync(socket, buffer, ct);
             if (frame.String("protocolVersion") != Protocol) throw new NotifyError("Неизвестная версия события Notify.");
             var payload = frame.Field("payload");
@@ -122,26 +146,55 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
             {
                 case "call.invite":
                     var selected = payload.String("sessionId");
-                    var accept = (selected is null || selected == session.Id) && payload.String("mode") == "conversation";
-                    if (accept) acceptedCall = callId;
+                    var assistant = payload.Field("phoneAssistant").ValueKind == JsonValueKind.True;
+                    var number = payload.String("extension");
+                    var routeMatches = assistant ? selected == PhoneSessionId && phone?.Ready == true &&
+                        payload.String("target") == "asterisk" && payload.String("securityLevel") == "standard" &&
+                        number is { Length: >= 2 and <= 8 } && number.All(char.IsAsciiDigit)
+                        : phone is null && (selected is null || selected == session.Id);
+                    var accept = acceptedCall == callId || (acceptedCall is null &&
+                        routeMatches && payload.String("mode") == "conversation" &&
+                        (enterCall?.Invoke() ?? true));
+                    if (accept && acceptedCall is null)
+                    {
+                        acceptedCall = callId;
+                        phoneCall = assistant;
+                        if (assistant)
+                        {
+                            extension = number!;
+                            phoneState?.Invoke(extension, true);
+                        }
+                    }
                     await outbound.WriteAsync(Call(accept ? "call.accept" : "call.reject", new { callId }), ct);
                     break;
                 case "dialog.user" when callId == acceptedCall &&
                     payload.String("turnId") is { Length: 32 } turnId &&
                     payload.String("text") is { Length: > 0 and <= 4000 } text && Remember(turnId):
-                    var turn = new Turn(callId, turnId, text);
+                    if (phoneCall) PhoneTiming.Mark(callId, turnId, "agent_received");
+                    var turn = new Turn(callId, turnId, text, phoneCall, interruption.Token);
                     Volatile.Write(ref dialog.Latest, turn);
                     turns.TryWrite(turn);
                     break;
                 case "call.interrupted" when callId == acceptedCall && payload.String("reason") == "user_speech":
                     Volatile.Write(ref dialog.Latest, null);
+                    if (phoneCall) interruption.Renew();
                     break;
                 case "call.ended" when callId == acceptedCall:
                     acceptedCall = null;
                     Volatile.Write(ref dialog.Latest, null);
+                    if (phoneCall)
+                    {
+                        interruption.Renew();
+                        phoneState?.Invoke(extension, false);
+                        phoneCall = false;
+                    }
+                    leaveCall?.Invoke();
                     report("Агент на связи · разговор завершён");
+                    if (phone is { Ready: false })
+                        throw new NotifyError("Восстанавливаем подключение к Codex.");
                     break;
             }
+          }
         }
     }
 
@@ -159,21 +212,28 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         await foreach (var turn in turns.ReadAllAsync(ct))
         {
             if (!ReferenceEquals(Volatile.Read(ref dialog.Latest), turn)) continue;
-            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
-            timeout.CancelAfter(TimeSpan.FromMinutes(2));
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, turn.Interruption);
+            timeout.CancelAfter(turn.Phone ? TimeSpan.FromSeconds(45) : TimeSpan.FromMinutes(2));
             try
             {
                 report("Ожидание ответа чата…");
-                var text = (await reply(turn.Text, timeout.Token)).Trim();
+                var text = (turn.Phone
+                    ? await phone!.ReplyAsync(turn.CallId, turn.TurnId, turn.Text, timeout.Token)
+                    : await reply(turn.Text, timeout.Token)).Trim();
                 if (!ReferenceEquals(Volatile.Read(ref dialog.Latest), turn)) continue;
                 if (text.Length == 0) throw new NotifyError("Чат вернул пустой ответ.");
                 if (text.Length > 1000) text = text[..(char.IsHighSurrogate(text[999]) ? 999 : 1000)];
                 // Notify uses turnId to deduplicate replies.
                 await outbound.WriteAsync(new ReplyFrame(turn, text), ct);
             }
+            catch (OperationCanceledException) when (turn.Interruption.IsCancellationRequested) { }
             catch (Exception error) when (!ct.IsCancellationRequested)
             {
                 report(error is NotifyError ? error.Message : "Чат недоступен. Проверьте, открыт ли доступ к выбранному чату.");
+                if (turn.Phone && ReferenceEquals(Volatile.Read(ref dialog.Latest), turn))
+                {
+                    await outbound.WriteAsync(new ReplyFrame(turn, "Не удалось получить ответ. Попробуйте повторить вопрос."), ct);
+                }
             }
         }
     }
@@ -196,6 +256,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
             var frame = reply is null ? value
                 : Call("call.say", new { reply.Turn.CallId, reply.Turn.TurnId, reply.Text });
             await SendAsync(socket, frame, timeout.Token);
+            if (reply?.Turn.Phone == true) PhoneTiming.Mark(reply.Turn.CallId, reply.Turn.TurnId, "agent_reply_sent");
             if (reply is not null) report("Агент на связи · ответ передан");
         }
     }
@@ -233,6 +294,22 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     private static string Id() => Guid.NewGuid().ToString("N");
     private static object Call(string type, object payload) => new { type, protocolVersion = CallProtocol, eventId = Id(), payload };
     private sealed class DialogState { public Turn? Latest; }
-    private sealed record Turn(string CallId, string TurnId, string Text);
+    private sealed record Turn(string CallId, string TurnId, string Text, bool Phone, CancellationToken Interruption);
     private sealed record ReplyFrame(Turn Turn, string Text);
+
+    private sealed class DialogInterruption : IDisposable
+    {
+        private CancellationTokenSource source = new();
+        internal CancellationToken Token => source.Token;
+        internal void Renew()
+        {
+            Dispose();
+            source = new();
+        }
+        public void Dispose()
+        {
+            source.Cancel();
+            source.Dispose();
+        }
+    }
 }

@@ -19,16 +19,18 @@ internal static class LocalSettings
 
     private static string SettingsPath => Path.Combine(DirectoryPath, "settings.json");
     private static string TokenPath => Path.Combine(DirectoryPath, "source.dpapi");
+    private static string PhoneTokenPath => Path.Combine(DirectoryPath, "phone-source.dpapi");
     private sealed record Credential(string Origin, string Token);
 
     internal static Preferences Read() => File.Exists(SettingsPath)
         ? JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(SettingsPath), Json) ?? new()
         : new();
 
-    internal static string? ReadToken(Uri origin)
+    internal static string? ReadToken(Uri origin, bool phone = false)
     {
-        if (!File.Exists(TokenPath)) return null;
-        var bytes = ProtectedData.Unprotect(File.ReadAllBytes(TokenPath), null, DataProtectionScope.CurrentUser);
+        var path = phone ? PhoneTokenPath : TokenPath;
+        if (!File.Exists(path)) return null;
+        var bytes = ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
         try
         {
             var credential = JsonSerializer.Deserialize<Credential>(bytes, Json);
@@ -42,11 +44,24 @@ internal static class LocalSettings
         Directory.CreateDirectory(DirectoryPath);
         if (token != null)
         {
-            var bytes = JsonSerializer.SerializeToUtf8Bytes(new Credential(preferences.Origin, token), Json);
-            try { Write(TokenPath, ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser)); }
-            finally { CryptographicOperations.ZeroMemory(bytes); }
+            WriteToken(TokenPath, preferences.Origin, token);
         }
         Write(SettingsPath, JsonSerializer.SerializeToUtf8Bytes(preferences, Json));
+    }
+
+    internal static void SavePhoneToken(Uri origin, string token)
+    {
+        Directory.CreateDirectory(DirectoryPath);
+        WriteToken(PhoneTokenPath, origin.GetLeftPart(UriPartial.Authority), token);
+    }
+
+    internal static void RemovePhoneToken() => File.Delete(PhoneTokenPath);
+
+    private static void WriteToken(string path, string origin, string token)
+    {
+        var bytes = JsonSerializer.SerializeToUtf8Bytes(new Credential(origin, token), Json);
+        try { Write(path, ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser)); }
+        finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
     internal static void Write(string path, byte[] bytes)

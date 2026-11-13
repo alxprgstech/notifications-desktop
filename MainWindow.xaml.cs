@@ -47,6 +47,11 @@ public partial class MainWindow : Window
         };
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Notify", null, (_, _) => ShowWindow());
+        menu.Items.Add("Проверить обновления", null, async (_, _) =>
+        {
+            ShowUpdates();
+            await CheckUpdatesAsync(manual: true);
+        });
         menu.Items.Add("Отключить", null, async (_, _) => await StopBridgeAsync());
         menu.Items.Add("Выход", null, async (_, _) => await ExitAsync());
         tray = new Forms.NotifyIcon
@@ -55,12 +60,15 @@ public partial class MainWindow : Window
             ContextMenuStrip = menu, Visible = true
         };
         tray.DoubleClick += (_, _) => ShowWindow();
+        tray.BalloonTipClicked += (_, _) => ShowUpdates();
     }
 
     internal void StartSaved()
     {
         Dispatcher.BeginInvoke(async () =>
         {
+            StartUpdates();
+            StartSavedPhone();
             try
             {
                 if (LocalSettings.ReadToken(LocalSettings.HttpsOrigin(preferences.Origin)) is not null &&
@@ -129,6 +137,8 @@ public partial class MainWindow : Window
     {
         var origin = LocalSettings.HttpsOrigin(Origin.Text.Trim());
         var token = RequireToken(origin);
+        if (token == LocalSettings.ReadToken(origin, phone: true))
+            throw new NotifyError("Для обычного подключения и телефонного помощника нужны разные источники Notify.");
         var client = Client.SelectedIndex == 0 ? "Codex" : "Harness";
         var chat = Chats.SelectedItem as Chat;
         Codex? codex = null;
@@ -206,7 +216,8 @@ public partial class MainWindow : Window
 
         Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation) =>
             new AgentBridge(origin, token, registration, bound, reply, Report,
-                connectionChanged: state => ShowSocketState(cancellation, state)).RunAsync(cancellation);
+                connectionChanged: state => ShowSocketState(cancellation, state),
+                enterCall: callActivity.TryEnter, leaveCall: CallFinished).RunAsync(cancellation);
     });
 
     private async void Check(object sender, RoutedEventArgs e) => await WithControlsAsync(async ct =>
@@ -305,6 +316,7 @@ public partial class MainWindow : Window
         if (exiting) return;
         exiting = true;
         await appLifetime.CancelAsync();
+        await StopPhoneAsync();
         await StopBridgeAsync();
         appLifetime.Dispose();
         tray.Visible = false;

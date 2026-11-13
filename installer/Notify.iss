@@ -31,7 +31,7 @@ UninstallDisplayIcon={app}\{#AppExe}
 WizardStyle=modern
 Compression=lzma2
 SolidCompression=yes
-CloseApplications=yes
+CloseApplications=no
 RestartApplications=no
 OutputDir={#OutputDir}
 OutputBaseFilename=ALXPRGS-Notify-Desktop-Setup-{#AppVersion}-win-x64
@@ -48,8 +48,19 @@ Name: "{userprograms}\{#AppName}"; Filename: "{app}\{#AppExe}"
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#AppExe}"; Parameters: "--background"; Flags: nowait runhidden; Check: IsNotifyUpdate
 
 [Code]
+function IsNotifyUpdate: Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 1 to ParamCount do
+    if CompareText(ParamStr(I), '/NOTIFYUPDATE') = 0 then
+      Result := True;
+end;
+
 function StopDesktop: Boolean;
 var
   Exe: String;

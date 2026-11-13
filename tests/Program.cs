@@ -7,6 +7,58 @@ using System.Text;
 using System.Text.Json;
 using Notify.Desktop;
 
+if (args is ["--github-update"])
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+    var manager = new UpdateManager(Path.Combine(Environment.CurrentDirectory, "artifacts", "github-updater-smoke"));
+    var update = await manager.CheckAsync("0.0.0", deadline.Token) ?? throw new Exception("No downloadable public release.");
+    await manager.DownloadAsync(update, null, deadline.Token);
+    Console.WriteLine($"PASS: anonymous GitHub release {update.Version}, HTTPS download, {update.Size} bytes, SHA-256 verified.");
+    return;
+}
+
+if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAgentId])
+{
+    var token = Environment.GetEnvironmentVariable("NOTIFY_PHONE_LAB_TOKEN") ?? throw new Exception("Missing synthetic lab credential.");
+    using var transport = new HttpMessageInvoker(new SocketsHttpHandler
+    {
+        SslOptions = { RemoteCertificateValidationCallback = (_, certificate, _, _) =>
+            certificate?.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256) == certificateHash }
+    });
+    using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+    using var assistant = new PhoneCodex(new Codex(Codex.Find()!), Path.Combine(LocalSettings.DirectoryPath, "phone-assistant"));
+    await assistant.WarmAsync(deadline.Token);
+    await new AgentBridge(new Uri(labOrigin), token, new Registration(labAgentId, "", "Phone lab", false, [], []),
+        new Chat(AgentBridge.PhoneSessionId, PhoneCodex.Name), (_, _) => throw new InvalidOperationException(),
+        Console.WriteLine, transport, phone: assistant).RunAsync(deadline.Token);
+    return;
+}
+
+if (args is ["--phone-codex"])
+{
+    using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
+    var directory = Path.Combine(LocalSettings.DirectoryPath, "phone-assistant");
+    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."));
+    string? threadId = null;
+    for (var session = 0; session < 2; session++)
+    {
+        using var assistant = new PhoneCodex(codex, directory);
+        await assistant.WarmAsync(deadline.Token);
+        var saved = File.ReadAllText(Path.Combine(directory, "thread-id"));
+        threadId ??= saved;
+        Equal(threadId, saved);
+        var reply = await assistant.ReplyAsync(Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"),
+            session == 0 ? "Тест телефона. Скажи коротко, сколько будет два плюс два."
+                : "Тест телефона. Повтори результат предыдущего сложения одним предложением.", deadline.Token);
+        if (!reply.Contains('4') && !reply.Contains("четыр", StringComparison.OrdinalIgnoreCase))
+            throw new Exception("The persistent assistant did not return the expected answer.");
+    }
+    Console.WriteLine("PASS: ChatGPT account, App Server reply and dedicated thread restored after process restart.");
+    return;
+}
+
+await UpdateSpecs.RunAsync();
+
 if (args is ["--wss-soak"])
 {
     await TlsBridgeSpec.RunAsync(reconnects: 40);

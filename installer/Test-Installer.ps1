@@ -91,7 +91,7 @@ New-Item -Path $runKey -Force | Out-Null
 Set-ItemProperty -LiteralPath $runKey -Name $runName -Value $runCommand
 
 $tray = Start-Tray
-Invoke-Setup $installerPath $flags 'upgrade'
+Invoke-Setup $installerPath "$flags /NOTIFYUPDATE" 'upgrade'
 if (-not $tray.WaitForExit(5000) -or $tray.ExitCode -ne 0) { throw 'Upgrade did not close the tray process cleanly' }
 Assert-InstalledVersion $Version
 if ((Get-FileHash -LiteralPath $settings).Hash -ne $settingsHash) { throw 'Update changed preferences or chat binding' }
@@ -100,7 +100,15 @@ $decoded = [Security.Cryptography.ProtectedData]::Unprotect([IO.File]::ReadAllBy
 if ([Text.Encoding]::UTF8.GetString($decoded) -ne [Text.Encoding]::UTF8.GetString($plain)) { throw 'DPAPI token is unreadable' }
 if ((Get-ItemPropertyValue -LiteralPath $runKey -Name $runName) -ne $runCommand) { throw 'Update changed autostart' }
 
-$tray = Start-Tray
+$restartDeadline = [DateTime]::UtcNow.AddSeconds(20)
+do {
+    $restarted = Get-Process -Name 'ALXPRGS.Notify.Desktop' -ErrorAction SilentlyContinue |
+        Where-Object { $_.Path -eq $exe } | Select-Object -First 1
+    if ($restarted) { break }
+    Start-Sleep -Milliseconds 200
+} while ([DateTime]::UtcNow -lt $restartDeadline)
+if (-not $restarted) { throw 'The update did not restart Notify Desktop' }
+$tray = $restarted
 Invoke-Setup $uninstaller $flags 'uninstall'
 if (-not $tray.WaitForExit(5000) -or $tray.ExitCode -ne 0) { throw 'Uninstall did not close the tray process cleanly' }
 if ((Test-Path $exe) -or (Test-Path $shortcut) -or (Test-Path $uninstallKey) -or (Test-Path $uninstaller)) {

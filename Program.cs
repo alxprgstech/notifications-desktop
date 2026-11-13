@@ -51,7 +51,7 @@ internal static class Program
         var showRegistration = ThreadPool.RegisterWaitForSingleObject(show, (_, _) =>
             app.Dispatcher.BeginInvoke(window.ShowWindow), null, Timeout.Infinite, false);
         var shutdownRegistration = ThreadPool.RegisterWaitForSingleObject(shutdown, (_, _) =>
-            app.Dispatcher.BeginInvoke(async () => await window.ExitAsync()), null, Timeout.Infinite, true);
+            app.Dispatcher.BeginInvoke(async () => await window.ExitForInstallerAsync()), null, Timeout.Infinite, false);
         try
         {
             if (!args.Contains("--background", StringComparer.Ordinal)) window.Show();

@@ -160,7 +160,7 @@ internal sealed class Codex(string executable)
         finally { Kill(process); }
     }
 
-    private Process Start(string[] arguments, string? directory = null, Action<string>? diagnostic = null)
+    internal Process Start(string[] arguments, string? directory = null, Action<string>? diagnostic = null, bool phone = false)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -169,6 +169,12 @@ internal sealed class Codex(string executable)
             StandardOutputEncoding = Encoding.UTF8, WorkingDirectory = directory ?? Environment.CurrentDirectory
         };
         foreach (var arg in arguments) start.ArgumentList.Add(arg);
+        if (phone)
+        {
+            foreach (var name in new[] { "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL",
+                "CODEX_INTERNAL_ORIGINATOR_OVERRIDE" })
+                start.Environment.Remove(name);
+        }
         var process = Process.Start(start) ?? throw new NotifyError("Не удалось запустить Codex.");
         process.ErrorDataReceived += (_, eventArgs) =>
         {
@@ -193,7 +199,7 @@ internal sealed class Codex(string executable)
         return null;
     }
 
-    private static async Task InitializeAsync(Process process, CancellationToken ct)
+    internal static async Task InitializeAsync(Process process, CancellationToken ct)
     {
         await WriteAsync(process, new { id = 1, method = "initialize",
             @params = new { clientInfo = new { name = "notify_desktop", title = "ALXPRGS Notify Desktop", version = "1.0.0" } } }, ct);
@@ -201,10 +207,10 @@ internal sealed class Codex(string executable)
         await WriteAsync(process, new { method = "initialized", @params = new { } }, ct);
     }
 
-    private static Task WriteAsync(Process process, object value, CancellationToken ct) =>
+    internal static Task WriteAsync(Process process, object value, CancellationToken ct) =>
         process.StandardInput.WriteLineAsync(JsonSerializer.Serialize(value).AsMemory(), ct);
 
-    private static async Task<JsonElement> ReadResultAsync(Process process, int id, CancellationToken ct)
+    internal static async Task<JsonElement> ReadResultAsync(Process process, int id, CancellationToken ct)
     {
         while (await process.StandardOutput.ReadLineAsync(ct) is { } line)
         {
@@ -220,7 +226,7 @@ internal sealed class Codex(string executable)
         throw new NotifyError("Codex App Server не подтвердил запрос.");
     }
 
-    private static void Kill(Process process)
+    internal static void Kill(Process process)
     {
         try { if (!process.HasExited) process.Kill(entireProcessTree: true); }
         catch (InvalidOperationException) { }
