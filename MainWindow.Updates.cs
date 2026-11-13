@@ -117,7 +117,11 @@ public partial class MainWindow
     private void CallFinished()
     {
         callActivity.Leave();
-        _ = Dispatcher.BeginInvoke(async () => await InstallWhenIdleAsync());
+        _ = Dispatcher.BeginInvoke(async () =>
+        {
+            if (!phoneActive) await MaintainPhoneAsync(preserveContext: true);
+            await InstallWhenIdleAsync();
+        });
     }
 
     private async Task InstallWhenIdleAsync()
