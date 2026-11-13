@@ -74,6 +74,19 @@ if (args is ["--phone-context", var labRoot])
     Equal(replacement, await File.ReadAllTextAsync(threadFile, labCancellation));
     await RequirePreference();
     Console.WriteLine("PASS: compaction preserved the synthetic fact and persistent thread ID.");
+    var serverExit = assistant.WaitForServerExitAsync(labCancellation);
+    if (serverExit.IsCompleted) throw new Exception("The live App Server was not being watched.");
+    await assistant.DisposeAsync();
+    await serverExit;
+    if (assistant.Ready) throw new Exception("The stopped App Server still reports readiness.");
+    await using var recovered = new PhoneCodex(codex, directory);
+    await recovered.WarmAsync(labCancellation);
+    Equal(replacement, await File.ReadAllTextAsync(threadFile, labCancellation));
+    var recoveredReply = await recovered.ReplyAsync(Guid.NewGuid().ToString("N"), Guid.NewGuid().ToString("N"),
+        "Какой фрукт я назвал любимым?", labCancellation);
+    if (!recoveredReply.Contains("манго", StringComparison.OrdinalIgnoreCase))
+        throw new Exception("The synthetic preference was lost after App Server restart.");
+    Console.WriteLine("PASS: process exit observed and the same persistent phone chat restored.");
     return;
 
     Task<string> Ask(string prompt) => assistant.ReplyAsync(

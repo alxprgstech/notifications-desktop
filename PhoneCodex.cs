@@ -18,6 +18,7 @@ internal sealed class PhoneCodex(Codex codex, string directory, Action<PhoneUsag
     internal double? ContextPercent => Volatile.Read(ref usage)?.Percent;
     private readonly SemaphoreSlim gate = new(1);
     private Process? server;
+    private TaskCompletionSource? serverExit;
     private string? threadId;
     private int nextId;
     private string ThreadFile => Path.Combine(directory, "thread-id");
@@ -40,10 +41,8 @@ internal sealed class PhoneCodex(Codex codex, string directory, Action<PhoneUsag
 
     internal async Task WaitForServerExitAsync(CancellationToken ct)
     {
-        var running = Volatile.Read(ref server);
-        if (running is null) return;
-        try { await running.WaitForExitAsync(ct); }
-        catch (InvalidOperationException) when (!ReferenceEquals(running, Volatile.Read(ref server))) { }
+        var exit = Volatile.Read(ref serverExit);
+        if (exit is not null) await exit.Task.WaitAsync(ct);
     }
 
     private async Task OpenAsync(CancellationToken ct)
@@ -90,6 +89,11 @@ internal sealed class PhoneCodex(Codex codex, string directory, Action<PhoneUsag
         }
         options.AddRange(["app-server", "--listen", "stdio://"]);
         server = codex.Start(options.ToArray(), directory, phone: true);
+        var exit = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Volatile.Write(ref serverExit, exit);
+        server.Exited += (_, _) => exit.TrySetResult();
+        server.EnableRaisingEvents = true;
+        if (server.HasExited) exit.TrySetResult();
         nextId = 1;
         await Codex.InitializeAsync(server, ct);
         await RequireChatGptAsync(ct);
@@ -271,6 +275,7 @@ internal sealed class PhoneCodex(Codex codex, string directory, Action<PhoneUsag
         var previous = Interlocked.Exchange(ref server, null)!;
         Codex.Kill(previous);
         previous.Dispose();
+        Interlocked.Exchange(ref serverExit, null)?.TrySetResult();
         threadId = null;
         PublishUsage(null);
     }
