@@ -68,7 +68,8 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(async () =>
         {
             StartUpdates();
-            StartSavedPhone();
+            PhoneAssistantEnabled.IsChecked = preferences.PhoneEnabled;
+            RefreshPhoneStatus();
             try
             {
                 if (LocalSettings.ReadToken(LocalSettings.HttpsOrigin(preferences.Origin)) is not null &&
@@ -118,6 +119,7 @@ public partial class MainWindow : Window
         try
         {
             var chats = await RequireCodex().ChatsAsync(ct);
+            chats.RemoveAll(chat => IsPhoneThread(chat));
             Chats.Items.Clear();
             foreach (var chat in chats) Chats.Items.Add(chat);
             Chats.SelectedItem = chats.FirstOrDefault(chat => chat.Id == current);
@@ -137,8 +139,6 @@ public partial class MainWindow : Window
     {
         var origin = LocalSettings.HttpsOrigin(Origin.Text.Trim());
         var token = RequireToken(origin);
-        if (token == LocalSettings.ReadToken(origin, phone: true))
-            throw new NotifyError("Для обычного подключения и телефонного помощника нужны разные источники Notify.");
         var client = Client.SelectedIndex == 0 ? "Codex" : "Harness";
         var chat = Chats.SelectedItem as Chat;
         Codex? codex = null;
@@ -160,6 +160,7 @@ public partial class MainWindow : Window
             throw new NotifyError("Сервер Notify должен поддерживать протокол звонков v2.");
         if (codex is not null && chat is not null)
         {
+            if (IsPhoneThread(chat)) throw new NotifyError("Выберите обычный чат Codex.");
             ChatStatus.Text = "Проверяем доступность выбранного чата…";
             try { await codex.CheckChatAsync(chat, ct); }
             catch (NotifyError error)
@@ -212,12 +213,21 @@ public partial class MainWindow : Window
             }
         });
         Stop.IsEnabled = true;
+        RefreshPhoneStatus();
         UpdateClientStates();
 
-        Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation) =>
-            new AgentBridge(origin, token, registration, bound, reply, Report,
+        async Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation)
+        {
+            var executable = Codex.Find();
+            using var phone = executable is null ? null :
+                new PhoneCodex(new Codex(executable), PhoneDirectory);
+            await new AgentBridge(origin, token, registration, bound, reply, Report,
                 connectionChanged: state => ShowSocketState(cancellation, state),
-                enterCall: callActivity.TryEnter, leaveCall: CallFinished).RunAsync(cancellation);
+                enterCall: callActivity.TryEnter, leaveCall: CallFinished,
+                phoneReply: phone is null ? null : phone.ReplyAsync,
+                phoneEnabled: () => Volatile.Read(ref phoneEnabled),
+                phoneState: (number, active) => ShowPhoneCall(cancellation, number, active)).RunAsync(cancellation);
+        }
     });
 
     private async void Check(object sender, RoutedEventArgs e) => await WithControlsAsync(async ct =>
@@ -299,6 +309,8 @@ public partial class MainWindow : Window
             stoppingBridge = null;
             cancellation.Dispose();
         }
+        RefreshPhoneStatus();
+        PhoneAssistantCall.Text = "";
         SocketState.Text = "Отключён";
         tray.Text = "ALXPRGS Notify · Отключён";
         UpdateClientStates();
@@ -316,7 +328,6 @@ public partial class MainWindow : Window
         if (exiting) return;
         exiting = true;
         await appLifetime.CancelAsync();
-        await StopPhoneAsync();
         await StopBridgeAsync();
         appLifetime.Dispose();
         tray.Visible = false;

@@ -30,7 +30,7 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
     await assistant.WarmAsync(deadline.Token);
     await new AgentBridge(new Uri(labOrigin), token, new Registration(labAgentId, "", "Phone lab", false, [], []),
         new Chat(AgentBridge.PhoneSessionId, PhoneCodex.Name), (_, _) => throw new InvalidOperationException(),
-        Console.WriteLine, transport, phone: assistant).RunAsync(deadline.Token);
+        Console.WriteLine, transport, phoneReply: assistant.ReplyAsync).RunAsync(deadline.Token);
     return;
 }
 
@@ -151,6 +151,13 @@ var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsync
 var interruptedStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var interruptedReply = new TaskCompletionSource<string>();
 var invocations = 0;
+const string phoneCallId = "60000000000000000000000000000000";
+const string phoneTurnId = "70000000000000000000000000000000";
+const string phoneSession = AgentBridge.PhoneSessionId;
+var phoneStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var phoneInterrupted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var phoneEnabled = true;
+var activeCalls = new CallActivity();
 var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-token", registration, new Chat("selected", "Выбранный чат"),
     async (text, token) =>
     {
@@ -158,7 +165,7 @@ var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-
         if (text == "Первая реплика")
         {
             started.SetResult();
-            await release.Task.WaitAsync(token);
+            await release.Task;
             return "Устаревший ответ";
         }
         if (text == "Прерываемая реплика")
@@ -168,7 +175,20 @@ var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-
         }
         Equal("Вторая реплика", text);
         return "Ответ чата";
-    }, _ => { });
+    }, _ => { }, enterCall: activeCalls.TryEnter, leaveCall: activeCalls.Leave,
+    phoneEnabled: () => Volatile.Read(ref phoneEnabled), phoneReply: async (id, turn, text, token) =>
+    {
+        Equal(phoneCallId, id);
+        if (turn == phoneTurnId)
+        {
+            Equal("Реплика по телефону", text);
+            return "Ответ по телефону";
+        }
+        phoneStarted.TrySetResult();
+        try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
+        catch (OperationCanceledException) { phoneInterrupted.TrySetResult(); throw; }
+        throw new Exception("Expected the phone turn to be canceled.");
+    });
 var ready = false;
 var run = bridge.RunSessionAsync(client, () => ready = true, ct);
 
@@ -176,6 +196,7 @@ var hello = await Receive();
 Equal("hello", hello.String("type"));
 Equal(agentId, hello.String("agentId"));
 var sessionId = hello.GetProperty("sessions")[0].String("id");
+Equal(phoneSession, hello.GetProperty("sessions")[1].String("id"));
 await Send(new { type = "hello_ack", protocolVersion = protocol, callProtocol = AgentBridge.CallProtocol,
     heartbeatSeconds = 1, agent = new { id = agentId } });
 await Send(Event("call.invite", new { callId, sessionId = "foreign-session", mode = "conversation" }));
@@ -185,6 +206,28 @@ Equal("call.accept", (await NextControl()).String("type"));
 Equal(true, ready);
 await Send(Event("dialog.user", new { callId, sessionId, turnId = firstTurn, text = "Первая реплика" }));
 await started.Task.WaitAsync(ct);
+var phoneInvite = Event("call.invite", new { callId = phoneCallId, sessionId = phoneSession,
+    phoneAssistant = true, target = "asterisk", securityLevel = "standard", extension = "7820", mode = "conversation" });
+await Send(phoneInvite);
+Equal("call.accept", (await NextControl()).String("type"));
+await Send(Event("dialog.user", new { callId = phoneCallId, sessionId, turnId = phoneTurnId, text = "Чужая сессия" }));
+await Send(Event("dialog.user", new { callId = phoneCallId, sessionId = phoneSession, turnId = phoneTurnId, text = "Реплика по телефону" }));
+var phoneSay = await NextControl();
+Equal("call.say", phoneSay.String("type"));
+Equal(phoneCallId, phoneSay.Field("payload").String("callId"));
+Equal("Ответ по телефону", phoneSay.Field("payload").String("text"));
+await Send(Event("dialog.user", new { callId = phoneCallId, sessionId = phoneSession, turnId = firstTurn, text = "Перебивание" }));
+await phoneStarted.Task.WaitAsync(ct);
+await Send(Event("call.interrupted", new { callId = phoneCallId, sessionId = phoneSession, reason = "user_speech" }));
+await phoneInterrupted.Task.WaitAsync(ct);
+// End only the SIP call.
+await Send(Event("dialog.user", new { callId = phoneCallId, sessionId = phoneSession, turnId = secondTurn, text = "Завершение" }));
+await Send(Event("call.ended", new { callId = phoneCallId, sessionId = phoneSession }));
+Volatile.Write(ref phoneEnabled, false);
+await Send(phoneInvite);
+Equal("call.reject", (await NextControl()).String("type"));
+Equal(true, activeCalls.Active);
+
 await Send(Event("dialog.user", new { callId, sessionId, turnId = secondTurn, text = "Вторая реплика" }));
 await Send(Event("dialog.user", new { callId, sessionId, turnId = secondTurn, text = "Вторая реплика" }));
 // A subsequent control reply proves the socket reader has processed the duplicate before the first worker resumes.
@@ -205,7 +248,9 @@ Equal("call.reject", (await NextControl()).String("type"));
 interruptedReply.SetResult("Этот ответ уже опоздал");
 await Send(Event("call.invite", new { callId = new string('f', 32), sessionId = "foreign-session", mode = "conversation" }));
 Equal("call.reject", (await NextControl()).String("type"));
-Equal("heartbeat", (await Receive()).String("type"));
+var heartbeat = await Receive();
+Equal("heartbeat", heartbeat.String("type"));
+Equal(1, heartbeat.GetProperty("sessions").GetArrayLength());
 await timeout.CancelAsync();
 try { await run; }
 catch (OperationCanceledException) { }
