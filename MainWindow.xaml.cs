@@ -16,6 +16,7 @@ public partial class MainWindow : Window
     private Preferences preferences = new();
     private CancellationTokenSource? bridgeCancellation;
     private Task? bridge;
+    private Task? stoppingBridge;
     private bool exiting;
     private bool checking;
 
@@ -30,20 +31,27 @@ public partial class MainWindow : Window
         if (preferences.Chat is { } chat) { Chats.Items.Add(chat); Chats.SelectedItem = chat; }
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
         AutoStart.IsChecked = run?.GetValue(RunValue) is string;
+        InitializePresentation();
         DetectClients();
         ContentRendered += async (_, _) =>
         {
             if (Client.SelectedIndex == 0 && Chats.Items.Count == 0 && Codex.Find() is not null)
                 await WithControlsAsync(LoadChatsAsync);
         };
-        Closing += (_, eventArgs) => { if (!exiting) { eventArgs.Cancel = true; Hide(); } };
+        Closing += async (_, eventArgs) =>
+        {
+            if (exiting) return;
+            eventArgs.Cancel = true;
+            if (preferences.KeepInTray) Hide();
+            else await ExitAsync();
+        };
         var menu = new Forms.ContextMenuStrip();
         menu.Items.Add("Открыть Notify", null, (_, _) => ShowWindow());
         menu.Items.Add("Отключить", null, async (_, _) => await StopBridgeAsync());
         menu.Items.Add("Выход", null, async (_, _) => await ExitAsync());
         tray = new Forms.NotifyIcon
         {
-            Icon = System.Drawing.SystemIcons.Information, Text = "ALXPRGS Notify Desktop",
+            Icon = LoadTrayIcon(), Text = "ALXPRGS Notify Desktop",
             ContextMenuStrip = menu, Visible = true
         };
         tray.DoubleClick += (_, _) => ShowWindow();
@@ -65,11 +73,11 @@ public partial class MainWindow : Window
 
     private void DetectClients()
     {
-        var codex = Codex.Find() is not null;
-        var harness = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
+        codexInstalled = Codex.Find() is not null;
+        harnessInstalled = (Environment.GetEnvironmentVariable("PATH") ?? "").Split(Path.PathSeparator)
             .Where(Path.IsPathFullyQualified).Any(path => File.Exists(Path.Combine(path, "dsh.cmd")) ||
                 File.Exists(Path.Combine(path, "dsh.exe")));
-        Detection.Text = $"Codex · {(codex ? "найден" : "не найден")}     Harness · {(harness ? "найден" : "не найден")}";
+        UpdateClientStates();
     }
 
     private void ClientChanged(object sender, SelectionChangedEventArgs e)
@@ -136,7 +144,7 @@ public partial class MainWindow : Window
         }
 
         var api = new NotifyHttp(origin, token);
-        var registration = await api.RegistrationAsync(ct);
+        var registration = await ReadRegistrationAsync(api, ct);
         ShowRegistration(registration);
         if (!registration.SupportedCallProtocols.Contains(AgentBridge.CallProtocol, StringComparer.Ordinal))
             throw new NotifyError("Сервер Notify должен поддерживать протокол звонков v2.");
@@ -166,12 +174,14 @@ public partial class MainWindow : Window
 
         await StopBridgeAsync();
         ct.ThrowIfCancellationRequested();
-        preferences = new Preferences(origin.GetLeftPart(UriPartial.Authority), client, client == "Codex" ? chat : null);
-        LocalSettings.Save(preferences, Token.Password.Length > 0 ? token : null);
+        var updated = preferences with { Origin = origin.GetLeftPart(UriPartial.Authority), Client = client, Chat = client == "Codex" ? chat : null };
+        LocalSettings.Save(updated, Token.Password.Length > 0 ? token : null);
+        preferences = updated;
         Token.Clear();
         TokenLabel.Text = "Токен источника сохранён · введите новый для замены";
         var lifetime = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         bridgeCancellation = lifetime;
+        SocketState.Text = client == "Harness" ? "Ждёт чат Harness" : "Подключается…";
         bridge = Task.Run(async () =>
         {
             try
@@ -183,17 +193,26 @@ public partial class MainWindow : Window
             }
             catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
             catch (Exception error) { Report(Friendly(error)); }
+            finally
+            {
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    if (bridgeCancellation == lifetime) _ = StopBridgeAsync();
+                });
+            }
         });
         Stop.IsEnabled = true;
+        UpdateClientStates();
 
         Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation) =>
-            new AgentBridge(origin, token, registration, bound, reply, Report).RunAsync(cancellation);
+            new AgentBridge(origin, token, registration, bound, reply, Report,
+                connectionChanged: state => ShowSocketState(cancellation, state)).RunAsync(cancellation);
     });
 
     private async void Check(object sender, RoutedEventArgs e) => await WithControlsAsync(async ct =>
     {
         var origin = LocalSettings.HttpsOrigin(Origin.Text.Trim());
-        var registration = await new NotifyHttp(origin, RequireToken(origin)).RegistrationAsync(ct);
+        var registration = await ReadRegistrationAsync(new NotifyHttp(origin, RequireToken(origin)), ct);
         ShowRegistration(registration);
         Report(registration.Online ? "Notify видит активное соединение агента." : "Агент зарегистрирован · сейчас не в сети.");
     });
@@ -209,8 +228,36 @@ public partial class MainWindow : Window
 
     private static Codex RequireCodex() => new(Codex.Find() ?? throw new NotifyError("Установите Codex CLI для Windows."));
 
-    private void ShowRegistration(Registration entry) =>
-        Registration.Text = $"Source ID  {entry.SourceId}\nAgent ID  {entry.AgentId}";
+    private async Task<Registration> ReadRegistrationAsync(NotifyHttp api, CancellationToken ct)
+    {
+        NotifyState.Text = "Проверяем регистрацию…";
+        try
+        {
+            var entry = await api.RegistrationAsync(ct);
+            NotifyState.Text = "Регистрация подтверждена";
+            return entry;
+        }
+        catch (Exception error)
+        {
+            NotifyState.Text = Friendly(error);
+            AgentId.Clear();
+            SourceId.Clear();
+            throw;
+        }
+    }
+
+    private void ShowRegistration(Registration entry)
+    {
+        AgentId.Text = entry.AgentId;
+        SourceId.Text = entry.SourceId;
+    }
+
+    private static System.Drawing.Icon LoadTrayIcon()
+    {
+        using var stream = Application.GetResourceStream(new Uri("Assets/Notify.ico", UriKind.Relative)).Stream;
+        using var icon = new System.Drawing.Icon(stream, Forms.SystemInformation.SmallIconSize);
+        return (System.Drawing.Icon)icon.Clone();
+    }
 
     private async Task WithControlsAsync(Func<CancellationToken, Task> action)
     {
@@ -228,6 +275,7 @@ public partial class MainWindow : Window
 
     private async Task StopBridgeAsync()
     {
+        if (stoppingBridge is not null) await stoppingBridge;
         var cancellation = bridgeCancellation;
         var task = bridge;
         bridgeCancellation = null;
@@ -235,14 +283,24 @@ public partial class MainWindow : Window
         Stop.IsEnabled = false;
         if (cancellation is not null)
         {
-            await cancellation.CancelAsync();
-            if (task is not null) await task;
+            stoppingBridge = FinishAsync();
+            await stoppingBridge;
+            stoppingBridge = null;
             cancellation.Dispose();
         }
+        SocketState.Text = "Отключён";
+        tray.Text = "ALXPRGS Notify · Отключён";
+        UpdateClientStates();
         Report("Отключено");
+
+        async Task FinishAsync()
+        {
+            await cancellation!.CancelAsync();
+            if (task is not null) await task;
+        }
     }
 
-    private async Task ExitAsync()
+    internal async Task ExitAsync()
     {
         if (exiting) return;
         exiting = true;
@@ -250,7 +308,10 @@ public partial class MainWindow : Window
         await StopBridgeAsync();
         appLifetime.Dispose();
         tray.Visible = false;
+        var icon = tray.Icon;
+        tray.ContextMenuStrip?.Dispose();
         tray.Dispose();
+        icon?.Dispose();
         Application.Current.Shutdown();
     }
 
@@ -268,7 +329,7 @@ public partial class MainWindow : Window
         NotifyError => error.Message,
         OperationCanceledException => "Истекло время ожидания.",
         HttpRequestException => "Не удалось связаться с Notify по HTTPS.",
-        _ => $"Операция недоступна · {error.GetType().Name}"
+        _ => "Операция недоступна. Повторите попытку."
     };
 
     private void OpenCabinet(object sender, RoutedEventArgs e)
@@ -289,6 +350,6 @@ public partial class MainWindow : Window
         catch (Exception error) { Report(Friendly(error)); }
     }
 
-    private void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
+    internal void ShowWindow() { Show(); WindowState = WindowState.Normal; Activate(); }
     private void HideWindow(object sender, RoutedEventArgs e) => Hide();
 }

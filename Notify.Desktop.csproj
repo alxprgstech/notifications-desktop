@@ -8,10 +8,15 @@
     <Nullable>enable</Nullable>
     <StartupObject>Notify.Desktop.Program</StartupObject>
     <AssemblyName>ALXPRGS.Notify.Desktop</AssemblyName>
+    <DefaultItemExcludes>$(DefaultItemExcludes);artifacts/**;tests/**</DefaultItemExcludes>
+    <!-- WPF owns process DPI awareness through the manifest. WinForms supplies only the tray. -->
+    <NoWarn>$(NoWarn);WFO0003</NoWarn>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets/Notify.ico</ApplicationIcon>
     <RootNamespace>Notify.Desktop</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Remove="tests/**/*.cs" />
+    <Resource Include="Assets/Notify.ico" />
     <InternalsVisibleTo Include="Notify.Desktop.Specs" />
   </ItemGroup>
 </Project>

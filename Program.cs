@@ -21,14 +21,55 @@ internal static class Program
             catch (Exception) { return 2; }
         }
 
-        using var mutex = new Mutex(true, "Local\\ALXPRGS.Notify.Desktop", out var first);
-        if (!first) return 0;
+        const string instance = @"Local\ALXPRGS.Notify.Desktop";
+        if (args is ["--shutdown"])
+        {
+            Signal(instance + ".Shutdown");
+            try
+            {
+                using var running = Mutex.OpenExisting(instance);
+                if (!running.WaitOne(TimeSpan.FromSeconds(15))) return 1;
+                running.ReleaseMutex();
+            }
+            catch (WaitHandleCannotBeOpenedException) { }
+            catch (AbandonedMutexException) { }
+            return 0;
+        }
+
+        using var mutex = new Mutex(true, instance, out var first);
+        if (!first)
+        {
+            if (!args.Contains("--background", StringComparer.Ordinal)) Signal(instance + ".Show");
+            return 0;
+        }
+
+        using var show = new EventWaitHandle(false, EventResetMode.AutoReset, instance + ".Show");
+        using var shutdown = new EventWaitHandle(false, EventResetMode.AutoReset, instance + ".Shutdown");
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         var window = new MainWindow();
         app.MainWindow = window;
-        if (!args.Contains("--background", StringComparer.Ordinal)) window.Show();
-        window.StartSaved();
-        return app.Run();
+        var showRegistration = ThreadPool.RegisterWaitForSingleObject(show, (_, _) =>
+            app.Dispatcher.BeginInvoke(window.ShowWindow), null, Timeout.Infinite, false);
+        var shutdownRegistration = ThreadPool.RegisterWaitForSingleObject(shutdown, (_, _) =>
+            app.Dispatcher.BeginInvoke(async () => await window.ExitAsync()), null, Timeout.Infinite, true);
+        try
+        {
+            if (!args.Contains("--background", StringComparer.Ordinal)) window.Show();
+            window.StartSaved();
+            return app.Run();
+        }
+        finally
+        {
+            showRegistration.Unregister(null);
+            shutdownRegistration.Unregister(null);
+            mutex.ReleaseMutex();
+        }
+    }
+
+    private static void Signal(string name)
+    {
+        if (!EventWaitHandle.TryOpenExisting(name, out var signal)) return;
+        using (signal) signal.Set();
     }
 
     private static async Task RunMcpAsync(NotifyHttp notify)

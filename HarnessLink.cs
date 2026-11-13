@@ -23,7 +23,7 @@ internal sealed class HarnessLink(Action<string> report)
                 try { await ServeAsync(listener, serve, ct); }
                 catch (Exception error) when (!ct.IsCancellationRequested && error is IOException or JsonException or OperationCanceledException)
                 {
-                    report($"Harness отключён · {error.GetType().Name}");
+                    report("Связь с плагином Harness прервалась.");
                 }
                 finally { if (listener.IsConnected) listener.Disconnect(); }
             }

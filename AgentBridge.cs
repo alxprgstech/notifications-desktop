@@ -3,8 +3,11 @@ using System.Threading.Channels;
 
 namespace Notify.Desktop;
 
+internal enum BridgeConnection { Connecting, Connected, Reconnecting }
+
 internal sealed class AgentBridge(Uri origin, string token, Registration registration, Chat chat,
-    Func<string, CancellationToken, Task<string>> reply, Action<string> report, HttpMessageInvoker? transport = null)
+    Func<string, CancellationToken, Task<string>> reply, Action<string> report, HttpMessageInvoker? transport = null,
+    Action<BridgeConnection>? connectionChanged = null)
 {
     private const string Protocol = "alxprgs.notify.agent.v1";
     internal const string CallProtocol = "alxprgs.notify.call.v2";
@@ -24,14 +27,21 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         {
             try
             {
+                connectionChanged?.Invoke(BridgeConnection.Connecting);
                 report("Подключение к Notify…");
-                await ConnectAsync(() => { attempt = 0; report("Агент на связи"); }, ct);
+                await ConnectAsync(() =>
+                {
+                    attempt = 0;
+                    connectionChanged?.Invoke(BridgeConnection.Connected);
+                    report("Агент на связи");
+                }, ct);
             }
             catch (OperationCanceledException) when (ct.IsCancellationRequested) { break; }
             catch (Exception error) when (error is WebSocketException or HttpRequestException or IOException or
                 OperationCanceledException or JsonException or NotifyError)
             {
-                report(error is NotifyError ? error.Message : $"Повтор подключения · {error.GetType().Name}");
+                connectionChanged?.Invoke(BridgeConnection.Reconnecting);
+                report(error is NotifyError ? error.Message : "Связь с Notify прервалась. Подключаемся снова…");
             }
             var delay = TimeSpan.FromSeconds(Math.Min(60, Math.Pow(2, attempt)) + Random.Shared.NextDouble());
             attempt = Math.Min(attempt + 1, 6);
@@ -163,7 +173,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
             }
             catch (Exception error) when (!ct.IsCancellationRequested)
             {
-                report(error is NotifyError ? error.Message : $"Чат недоступен · {error.GetType().Name}");
+                report(error is NotifyError ? error.Message : "Чат недоступен. Проверьте, открыт ли доступ к выбранному чату.");
             }
         }
     }

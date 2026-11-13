@@ -1,0 +1,85 @@
+name: Windows installer
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - name: Validate version
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          if ($env:GITHUB_EVENT_NAME -eq 'workflow_dispatch') {
+            $version = '0.0.1'
+          } else {
+            if ($env:RELEASE_TAG -cnotmatch '\Av((0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4})\.(0|[1-9][0-9]{0,4}))\z' -or
+                $env:GITHUB_REF -cne "refs/tags/$env:RELEASE_TAG") {
+              throw 'Publish from a tag in the vX.Y.Z format'
+            }
+            $version = $Matches[1]
+            if ($version.Split('.') | Where-Object { [int]$_ -gt 65534 }) {
+              throw 'Version component is outside the Windows file version range'
+            }
+          }
+          if ($version -eq '0.0.0') { throw 'Version 0.0.0 is reserved for the smoke-test baseline' }
+          "RELEASE_VERSION=$version" >> $env:GITHUB_ENV
+      - uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        with:
+          dotnet-version: 10.0.x
+      - run: dotnet restore tests/Notify.Desktop.Specs.csproj
+      - run: dotnet build tests/Notify.Desktop.Specs.csproj -c Release --no-restore
+      - run: dotnet run --project tests/Notify.Desktop.Specs.csproj -c Release --no-build
+      - name: Install verified Inno Setup
+        run: ./installer/Get-InnoSetup.ps1
+      - name: Build baseline and release installers
+        run: |
+          ./installer/Build-Installer.ps1 -Version 0.0.0 -Iscc $env:ISCC
+          ./installer/Build-Installer.ps1 -Version $env:RELEASE_VERSION -Iscc $env:ISCC
+      - name: Smoke-test clean install, running upgrade and uninstall
+        run: |
+          ./installer/Test-Installer.ps1 -Baseline ./artifacts/ALXPRGS-Notify-Desktop-Setup-0.0.0-win-x64.exe `
+            -Installer "./artifacts/ALXPRGS-Notify-Desktop-Setup-$env:RELEASE_VERSION-win-x64.exe" -Version $env:RELEASE_VERSION
+      - name: Compute SHA-256
+        run: |
+          $name = "ALXPRGS-Notify-Desktop-Setup-$env:RELEASE_VERSION-win-x64.exe"
+          $hash = (Get-FileHash "artifacts/$name" -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  $name" | Set-Content -Encoding ascii "artifacts/$name.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: notify-installer
+          path: |
+            artifacts/ALXPRGS-Notify-Desktop-Setup-${{ env.RELEASE_VERSION }}-win-x64.exe
+            artifacts/ALXPRGS-Notify-Desktop-Setup-${{ env.RELEASE_VERSION }}-win-x64.exe.sha256
+          if-no-files-found: error
+          compression-level: 0
+
+  publish:
+    if: github.event_name == 'release'
+    needs: installer
+    runs-on: windows-2025
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: notify-installer
+          path: artifacts
+      - name: Attach installer to the published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+        run: |
+          $version = $env:RELEASE_TAG.Substring(1)
+          $installer = "./artifacts/ALXPRGS-Notify-Desktop-Setup-$version-win-x64.exe"
+          gh release upload --repo $env:GITHUB_REPOSITORY $env:RELEASE_TAG $installer "$installer.sha256"
