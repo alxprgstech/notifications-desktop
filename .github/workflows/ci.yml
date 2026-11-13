@@ -21,3 +21,23 @@ jobs:
       - run: dotnet restore tests/Notify.Desktop.Specs.csproj
       - run: dotnet build tests/Notify.Desktop.Specs.csproj -c Release --no-restore
       - run: dotnet run --project tests/Notify.Desktop.Specs.csproj -c Release --no-build
+
+  installer:
+    runs-on: windows-2025
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@9a946fdbd5fb07b82b2f5a4466058b876ab72bb2 # v5.3.0
+        with:
+          dotnet-version: 10.0.x
+      - name: Install verified Inno Setup
+        run: ./installer/Get-InnoSetup.ps1
+      - name: Build installers
+        run: |
+          ./installer/Build-Installer.ps1 -Version 0.0.0 -Iscc $env:ISCC
+          ./installer/Build-Installer.ps1 -Version 0.0.1 -Iscc $env:ISCC
+      - name: Check running upgrade and DPAPI preservation
+        run: |
+          ./installer/Test-Installer.ps1 -Baseline ./artifacts/ALXPRGS-Notify-Desktop-Setup-0.0.0-win-x64.exe `
+            -Installer ./artifacts/ALXPRGS-Notify-Desktop-Setup-0.0.1-win-x64.exe -Version 0.0.1

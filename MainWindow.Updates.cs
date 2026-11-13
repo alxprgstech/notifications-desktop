@@ -123,9 +123,9 @@ public partial class MainWindow
     private async Task InstallWhenIdleAsync()
     {
         if (!installRequested || installing || exiting || pendingUpdate is null || pendingInstaller is null) return;
-        if (callActivity.Active)
+        if (callActivity.Busy)
         {
-            UpdateStatus.Text = "Установка начнётся после завершения звонка.";
+            UpdateStatus.Text = "Установка начнётся, когда телефонный помощник освободится.";
             return;
         }
         installing = true;
@@ -135,9 +135,9 @@ public partial class MainWindow
             if (!await UpdateManager.MatchesAsync(pendingInstaller, pendingUpdate, appLifetime.Token))
                 throw new InvalidDataException("Installer SHA-256 mismatch.");
             if (!installRequested || exiting) return;
-            if (callActivity.Active)
+            if (callActivity.Busy)
             {
-                UpdateStatus.Text = "Установка начнётся после завершения звонка.";
+                UpdateStatus.Text = "Установка начнётся, когда телефонный помощник освободится.";
                 return;
             }
             var start = new ProcessStartInfo(pendingInstaller) { UseShellExecute = false, CreateNoWindow = true };
@@ -146,7 +146,7 @@ public partial class MainWindow
             using var installer = Process.Start(start) ?? throw new IOException("Installer did not start.");
             UpdateStatus.Text = $"Устанавливаем версию {pendingUpdate.Version}…";
             await installer.WaitForExitAsync(appLifetime.Token);
-            if (!exiting) UpdateStatus.Text = callActivity.Active ? "Установка начнётся после завершения звонка."
+            if (!exiting) UpdateStatus.Text = callActivity.Busy ? "Установка начнётся, когда телефонный помощник освободится."
                 : "Установка прервана. Повторите попытку после завершения звонков.";
         }
         catch (OperationCanceledException) when (appLifetime.IsCancellationRequested) { }
@@ -157,7 +157,7 @@ public partial class MainWindow
         finally
         {
             installing = false;
-            if (!callActivity.Active) installRequested = false;
+            if (!callActivity.Busy) installRequested = false;
         }
     }
 
@@ -170,7 +170,7 @@ internal sealed class CallActivity
     private int active;
     private bool stopping;
     private bool maintaining;
-    internal bool Active { get { lock (gate) return active != 0; } }
+    internal bool Busy { get { lock (gate) return active != 0 || maintaining; } }
 
     internal bool TryEnter()
     {

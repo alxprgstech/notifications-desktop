@@ -123,9 +123,10 @@ var maintenance = new CallActivity();
 if (!maintenance.TryEnter() || maintenance.TryMaintain())
     throw new Exception("Phone maintenance must not start during an active call.");
 maintenance.Leave();
-if (!maintenance.TryMaintain() || maintenance.TryEnter() || maintenance.TryStop())
+if (!maintenance.TryMaintain() || !maintenance.Busy || maintenance.TryEnter() || maintenance.TryStop())
     throw new Exception("Calls and installation must wait during phone maintenance.");
 maintenance.EndMaintenance();
+if (maintenance.Busy) throw new Exception("Installation must resume after phone maintenance.");
 if (!maintenance.TryEnter()) throw new Exception("Calls must resume after phone maintenance.");
 maintenance.Leave();
 
@@ -298,7 +299,7 @@ await Send(Event("call.ended", new { callId = phoneCallId, sessionId = phoneSess
 Volatile.Write(ref phoneEnabled, false);
 await Send(phoneInvite);
 Equal("call.reject", (await NextControl()).String("type"));
-Equal(true, activeCalls.Active);
+Equal(true, activeCalls.Busy);
 
 await Send(Event("dialog.user", new { callId, sessionId, turnId = secondTurn, text = "Вторая реплика" }));
 await Send(Event("dialog.user", new { callId, sessionId, turnId = secondTurn, text = "Вторая реплика" }));
