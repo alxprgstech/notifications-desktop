@@ -221,12 +221,22 @@ public partial class MainWindow : Window
             var executable = Codex.Find();
             using var phone = executable is null ? null :
                 new PhoneCodex(new Codex(executable), PhoneDirectory);
-            await new AgentBridge(origin, token, registration, bound, reply, Report,
-                connectionChanged: state => ShowSocketState(cancellation, state),
-                enterCall: callActivity.TryEnter, leaveCall: CallFinished,
-                phoneReply: phone is null ? null : phone.ReplyAsync,
-                phoneEnabled: () => Volatile.Read(ref phoneEnabled),
-                phoneState: (number, active) => ShowPhoneCall(cancellation, number, active)).RunAsync(cancellation);
+            using var warmupLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            var warmup = phone is null ? Task.CompletedTask : WarmPhoneAsync(phone, warmupLifetime.Token);
+            try
+            {
+                await new AgentBridge(origin, token, registration, bound, reply, Report,
+                    connectionChanged: state => ShowSocketState(cancellation, state),
+                    enterCall: callActivity.TryEnter, leaveCall: CallFinished,
+                    phoneReply: phone is null ? null : phone.ReplyAsync,
+                    phoneEnabled: () => Volatile.Read(ref phoneEnabled),
+                    phoneState: (number, active) => ShowPhoneCall(cancellation, number, active)).RunAsync(cancellation);
+            }
+            finally
+            {
+                await warmupLifetime.CancelAsync();
+                await warmup;
+            }
         }
     });
 
