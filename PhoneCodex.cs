@@ -38,6 +38,14 @@ internal sealed class PhoneCodex(Codex codex, string directory, Action<PhoneUsag
         finally { gate.Release(); }
     }
 
+    internal async Task WaitForServerExitAsync(CancellationToken ct)
+    {
+        var running = Volatile.Read(ref server);
+        if (running is null) return;
+        try { await running.WaitForExitAsync(ct); }
+        catch (InvalidOperationException) when (!ReferenceEquals(running, Volatile.Read(ref server))) { }
+    }
+
     private async Task OpenAsync(CancellationToken ct)
     {
         Reset();
@@ -260,9 +268,9 @@ internal sealed class PhoneCodex(Codex codex, string directory, Action<PhoneUsag
     private void Reset()
     {
         if (server is null) return;
-        Codex.Kill(server);
-        server.Dispose();
-        server = null;
+        var previous = Interlocked.Exchange(ref server, null)!;
+        Codex.Kill(previous);
+        previous.Dispose();
         threadId = null;
         PublishUsage(null);
     }

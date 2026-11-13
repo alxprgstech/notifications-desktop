@@ -201,6 +201,7 @@ public partial class MainWindow : Window
         var lifetime = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         bridgeCancellation = lifetime;
         SocketState.Text = client == "Harness" ? "Ждёт чат Harness" : "Подключается…";
+        RefreshPhoneStatus();
         bridge = Task.Run(async () =>
         {
             try
@@ -221,7 +222,6 @@ public partial class MainWindow : Window
             }
         });
         Stop.IsEnabled = true;
-        RefreshPhoneStatus();
         UpdateClientStates();
 
         async Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation)

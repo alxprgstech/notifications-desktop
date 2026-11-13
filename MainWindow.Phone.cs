@@ -6,6 +6,7 @@ public partial class MainWindow
 {
     private static string PhoneDirectory => Path.Combine(LocalSettings.DirectoryPath, "phone-assistant");
     private bool phoneEnabled;
+    private readonly SemaphoreSlim phoneEnabledSignal = new(0);
     private bool phoneReady;
     private bool phoneFailed;
     private bool phoneActive;
@@ -152,7 +153,12 @@ public partial class MainWindow
     private void RefreshPhoneStatus()
     {
         var codexAvailable = Codex.Find() is not null;
-        Volatile.Write(ref phoneEnabled, preferences.PhoneEnabled && codexAvailable);
+        var enabled = preferences.PhoneEnabled && codexAvailable;
+        if (enabled != Volatile.Read(ref phoneEnabled))
+        {
+            Volatile.Write(ref phoneEnabled, enabled);
+            if (enabled) phoneEnabledSignal.Release();
+        }
         UpdatePhoneHome();
     }
 
@@ -162,26 +168,26 @@ public partial class MainWindow
         {
             while (!ct.IsCancellationRequested)
             {
-                if (Volatile.Read(ref phoneEnabled))
+                if (!Volatile.Read(ref phoneEnabled))
+                {
+                    await phoneEnabledSignal.WaitAsync(ct);
+                    continue;
+                }
+                try
                 {
                     using var attempt = CancellationTokenSource.CreateLinkedTokenSource(ct);
                     attempt.CancelAfter(TimeSpan.FromSeconds(20));
-                    try
-                    {
-                        if (!phone.Ready)
-                        {
-                            await phone.WarmAsync(attempt.Token);
-                            ShowPhoneReadiness(ct, true);
-                        }
-                    }
-                    catch (Exception error) when (!ct.IsCancellationRequested)
-                    {
-                        Report($"Телефонный помощник · {Friendly(error)}");
-                        ShowPhoneReadiness(ct, false);
-                        await Task.Delay(TimeSpan.FromSeconds(20), ct);
-                    }
+                    await phone.WarmAsync(attempt.Token);
+                    ShowPhoneReadiness(ct, true);
+                    await phone.WaitForServerExitAsync(ct);
+                    ShowPhoneReadiness(ct, false);
                 }
-                await Task.Delay(TimeSpan.FromSeconds(2), ct);
+                catch (Exception error) when (!ct.IsCancellationRequested)
+                {
+                    Report($"Телефонный помощник · {Friendly(error)}");
+                    ShowPhoneReadiness(ct, false);
+                    await Task.Delay(TimeSpan.FromSeconds(20), ct);
+                }
             }
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested) { }
