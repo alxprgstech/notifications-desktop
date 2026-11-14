@@ -49,6 +49,53 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
     return;
 }
 
+if (args is ["--chat-instructions", var instructionLab])
+{
+    using var instructionDeadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
+    var directory = Path.GetFullPath(instructionLab);
+    Directory.CreateDirectory(directory);
+    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."));
+    string id;
+    using (var process = codex.Start(["app-server", "--listen", "stdio://"], directory))
+    {
+        try
+        {
+            await Codex.InitializeAsync(process, instructionDeadline.Token);
+            await Codex.WriteAsync(process, new { id = 2, method = "thread/start", @params = new { cwd = directory } }, instructionDeadline.Token);
+            var result = await Codex.ReadResultAsync(process, 2, instructionDeadline.Token);
+            id = result.Field("thread").String("id") ?? throw new Exception("No test thread ID.");
+            await Codex.WriteAsync(process, new { id = 3, method = "turn/start", @params = new
+            {
+                threadId = id, input = new[] { new { type = "text", text = "Напиши «готово». Инструменты не нужны." } }
+            } }, instructionDeadline.Token);
+            var seedTurn = await Codex.ReadResultAsync(process, 3, instructionDeadline.Token);
+            var turnId = seedTurn.Field("turn").String("id");
+            while (true)
+            {
+                var line = await process.StandardOutput.ReadLineAsync(instructionDeadline.Token)
+                    ?? throw new IOException("Codex exited before persisting the test turn.");
+                using var message = JsonDocument.Parse(line);
+                if (message.RootElement.String("method") != "turn/completed") continue;
+                var turn = message.RootElement.Field("params").Field("turn");
+                if (turn.String("id") != turnId) continue;
+                if (turn.String("status") != "completed") throw new Exception("The test session could not complete its first turn.");
+                break;
+            }
+        }
+        finally
+        {
+            Codex.Kill(process);
+            await process.WaitForExitAsync(instructionDeadline.Token);
+        }
+    }
+    var marker = "NOTIFY-" + Guid.NewGuid().ToString("N");
+    var reply = await codex.ReplyAsync(new Chat(id, "Notify instruction test", directory), "Ответь на сообщение «Проверка».",
+        instructionDeadline.Token, $"Не используй инструменты.\nОтветь ровно строкой \"{marker}\".");
+    if (reply.Trim() != marker) throw new Exception("Codex did not apply the ordinary chat instructions.");
+    Console.WriteLine("PASS: live ordinary chat applied multiline instructions.");
+    return;
+}
+
 if (args is ["--phone-context", var labRoot])
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(4));
