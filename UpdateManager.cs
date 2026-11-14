@@ -20,6 +20,7 @@ internal sealed partial class UpdateManager(string cache, HttpClient? transport 
     private HttpClient Http => transport ?? Client;
     private EntityTagHeaderValue? etag;
     private DesktopUpdate? latest;
+    internal string? LatestStableVersion { get; private set; }
 
     // Only stable versions are eligible. Build metadata does not affect SemVer precedence.
     [GeneratedRegex(@"\Av?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?\z")]
@@ -39,19 +40,28 @@ internal sealed partial class UpdateManager(string cache, HttpClient? transport 
         using var request = Request(Releases);
         if (etag != null) request.Headers.IfNoneMatch.Add(etag);
         using var response = await Http.SendAsync(request, ct);
-        if (response.StatusCode == HttpStatusCode.NotModified) return latest;
+        if (response.StatusCode == HttpStatusCode.NotModified)
+            return latest is not null && ParseVersion(latest.Version)!.Value.CompareTo(current) > 0 ? latest : null;
         response.EnsureSuccessStatusCode();
         using var json = JsonDocument.Parse(await response.Content.ReadAsByteArrayAsync(ct));
-        var highest = current;
+        var highest = (Major: BigInteger.Zero, Minor: BigInteger.Zero, Patch: BigInteger.Zero);
+        (BigInteger, BigInteger, BigInteger)? highestStable = null;
+        string? stableLabel = null;
         DesktopUpdate? candidate = null;
         foreach (var release in json.RootElement.EnumerateArray())
         {
             if (release.Field("draft").ValueKind != JsonValueKind.False ||
                 release.Field("prerelease").ValueKind != JsonValueKind.False) continue;
             var tag = release.String("tag_name");
-            if (ParseVersion(tag) is not { } version || version.CompareTo(highest) <= 0 ||
-                release.Field("assets") is not { ValueKind: JsonValueKind.Array } assets) continue;
+            if (ParseVersion(tag) is not { } version) continue;
             var label = tag!.TrimStart('v');
+            if (highestStable is null || version.CompareTo(highestStable.Value) > 0)
+            {
+                highestStable = version;
+                stableLabel = label;
+            }
+            if ((candidate is not null && version.CompareTo(highest) <= 0) ||
+                release.Field("assets") is not { ValueKind: JsonValueKind.Array } assets) continue;
             var name = $"ALXPRGS-Notify-Desktop-Setup-{label}-win-x64.exe";
             foreach (var asset in assets.EnumerateArray())
             {
@@ -70,7 +80,9 @@ internal sealed partial class UpdateManager(string cache, HttpClient? transport 
             }
         }
         etag = response.Headers.ETag;
-        return latest = candidate;
+        latest = candidate;
+        LatestStableVersion = stableLabel;
+        return candidate is not null && highest.CompareTo(current) > 0 ? candidate : null;
     }
 
     internal async Task<string> DownloadAsync(DesktopUpdate update, IProgress<int>? progress, CancellationToken ct)

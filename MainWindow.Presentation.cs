@@ -1,6 +1,7 @@
 using System.Windows;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Runtime.InteropServices;
 using Microsoft.Win32;
 
 namespace Notify.Desktop;
@@ -11,14 +12,17 @@ public partial class MainWindow
     private bool codexInstalled;
     private bool harnessInstalled;
     private bool presentationReady;
+    internal (int Caption, int Text)? CaptionThemeResult { get; private set; }
     private bool agentConnected;
     private bool codexReplying;
     private string? codexFailure;
+    private Chat? connectedChat;
 
     internal void SetVisualTheme(string theme)
     {
         preferences = preferences with { Theme = theme };
         ApplyTheme();
+        SourceInitialized += (_, _) => ApplyCaption();
         RefreshPhoneStatus();
     }
 
@@ -63,6 +67,8 @@ public partial class MainWindow
         SetBrush("AccentDetail", "#006A70", "#75DED2", SystemColors.HotTrackBrush);
         SetBrush("AccentFill", "#006A70", "#75DED2", SystemColors.HighlightBrush);
         SetBrush("AccentText", "#FFFFFF", "#102A2B", SystemColors.HighlightTextBrush);
+        ApplyCaption();
+        DrawCallTimeline();
 
         void SetBrush(string key, string light, string night, Brush contrast)
         {
@@ -77,6 +83,23 @@ public partial class MainWindow
             Resources[key] = brush;
         }
     }
+
+    private void ApplyCaption()
+    {
+        var handle = new WindowInteropHelper(this).Handle;
+        if (handle == 0 || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
+        CaptionThemeResult = (SetColor(35, "Chrome"), SetColor(36, "PrimaryText"));
+
+        int SetColor(int attribute, string brush)
+        {
+            var color = ((SolidColorBrush)Resources[brush]).Color;
+            var value = SystemParameters.HighContrast ? -1 : color.R | color.G << 8 | color.B << 16;
+            return DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int));
+        }
+    }
+
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(nint window, int attribute, ref int value, int size);
 
     private void ChangeAppearance(object sender, RoutedEventArgs e)
     {
@@ -117,8 +140,10 @@ public partial class MainWindow
         ConnectionsPage.Visibility = page == "1" ? Visibility.Visible : Visibility.Collapsed;
         DiagnosticsPage.Visibility = page == "2" ? Visibility.Visible : Visibility.Collapsed;
         SettingsPage.Visibility = page == "3" ? Visibility.Visible : Visibility.Collapsed;
+        CallsPage.Visibility = page == "4" ? Visibility.Visible : Visibility.Collapsed;
         PageScroll.ScrollToTop();
         if (page == "1") DetectClients();
+        if (page == "4") _ = RefreshCallsAsync();
     }
 
     private void OpenConnections(object sender, RoutedEventArgs e) => ConnectionsNav.IsChecked = true;
@@ -148,6 +173,13 @@ public partial class MainWindow
         HarnessState.Text = agentConnected && preferences.Client == "Harness"
             ? "Подключён"
             : harnessInstalled ? "Установлен, но неактивен" : "Не найден";
+        var harness = preferences.Client == "Harness";
+        HomeClient.Text = harness ? "DeepSeek Harness" : "Codex";
+        HomeClientState.Text = agentConnected ? "Подключён и готов" : harness ? HarnessState.Text : CodexState.Text;
+        var selected = connectedChat ?? (harness ? null : preferences.Chat);
+        HomePrimaryChat.Text = selected?.Name ?? "Чат не выбран";
+        HomePrimaryState.Text = selected is null ? "Выберите чат в разделе «Подключения»."
+            : agentConnected && connectedChat is not null ? "Сюда поступают реплики обычного разговора." : "Сессия не подключена.";
     }
 
     private async Task<string> ReplyToCodexAsync(Codex codex, Chat chat, string text, CancellationToken lifetime, CancellationToken ct)

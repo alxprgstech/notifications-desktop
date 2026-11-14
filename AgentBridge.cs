@@ -1,4 +1,5 @@
 using System.Net.WebSockets;
+using System.Diagnostics;
 using System.Threading.Channels;
 
 namespace Notify.Desktop;
@@ -9,7 +10,10 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     Func<string, CancellationToken, Task<string>> reply, Action<string> report, HttpMessageInvoker? transport = null,
     Action<BridgeConnection>? connectionChanged = null, Func<bool>? enterCall = null, Action? leaveCall = null,
     Func<string, string, string, CancellationToken, Task<string>>? phoneReply = null,
-    Func<bool>? phoneEnabled = null, Action<string, bool>? phoneState = null, Func<bool>? phoneReady = null)
+    Func<bool>? phoneEnabled = null, Action<string, bool>? phoneState = null, Func<bool>? phoneReady = null,
+    Action<string>? phoneStage = null,
+    Func<string, string, string, CancellationToken, Action<PhoneTurnMetric>?, Task<string>>? measuredPhoneReply = null,
+    bool ordinaryChatReady = true)
 {
     internal const string PhoneSessionId = "notify-phone-assistant";
     private const string Protocol = "alxprgs.notify.agent.v1";
@@ -72,7 +76,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         {
             type = "hello", protocolVersion = Protocol, eventId = Id(), agentId = registration.AgentId,
             name = "ALXPRGS Notify Desktop", capabilities = new[] { "realtime_audio" },
-            callProtocols = new[] { CallProtocol }, sessions = Sessions(), client = "alxprgs-notify-desktop"
+            callProtocols = new[] { CallProtocol }, sessions = Sessions(), client = "alxprgs-notify-desktop",
+            callPlaybackStatus = phoneStage is not null
         }, opening.Token);
         var buffer = new byte[MaxMessage + 1];
         var hello = await ReceiveAsync(socket, buffer, opening.Token);
@@ -88,14 +93,15 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         var outbound = Channel.CreateBounded<object>(32);
         using var chatDialog = new DialogState(phone: false);
         using var phoneDialog = new DialogState(phone: true);
+        var trace = hello.Field("callTrace").ValueKind == JsonValueKind.True;
         var dialogs = new[] { chatDialog, phoneDialog };
         var tasks = new[]
         {
             ReadLoopAsync(socket, buffer, outbound.Writer, chatDialog, phoneDialog, lifetime.Token),
             SendLoopAsync(socket, outbound.Reader, lifetime.Token),
             HeartbeatAsync(seconds, outbound.Writer, lifetime.Token),
-            ReplyLoopAsync(chatDialog, outbound.Writer, lifetime.Token),
-            ReplyLoopAsync(phoneDialog, outbound.Writer, lifetime.Token)
+            ReplyLoopAsync(chatDialog, outbound.Writer, trace, lifetime.Token),
+            ReplyLoopAsync(phoneDialog, outbound.Writer, trace, lifetime.Token)
         };
         try { await await Task.WhenAny(tasks); }
         finally
@@ -110,9 +116,13 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
 
     private bool PhoneEnabled => phoneReply is not null && (phoneEnabled?.Invoke() ?? true);
 
-    private object[] Sessions() => PhoneEnabled
-        ? [new { id = session.Id, name = session.Name }, new { id = PhoneSessionId, name = PhoneCodex.Name }]
-        : [new { id = session.Id, name = session.Name }];
+    private object[] Sessions()
+    {
+        var sessions = new List<object>(2);
+        if (ordinaryChatReady) sessions.Add(new { id = session.Id, name = session.Name });
+        if (PhoneEnabled && (phoneReady?.Invoke() ?? true)) sessions.Add(new { id = PhoneSessionId, name = PhoneCodex.Name });
+        return sessions.ToArray();
+    }
 
     private async Task ReadLoopAsync(WebSocket socket, byte[] buffer, ChannelWriter<object> outbound,
         DialogState chatDialog, DialogState phoneDialog, CancellationToken ct)
@@ -135,7 +145,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     (dialog == phoneDialog || (PhoneEnabled && (phoneReady?.Invoke() ?? true))) &&
                     payload.String("target") == "asterisk" && payload.String("securityLevel") == "standard" &&
                     number is { Length: >= 2 and <= 8 } && number.All(char.IsAsciiDigit)
-                    : sessionId is null || sessionId == session.Id;
+                    : ordinaryChatReady && (sessionId is null || sessionId == session.Id);
                 var accept = routeMatches && payload.String("mode") == "conversation" &&
                     (dialog == selected || (dialog is null && selected.CallId is null && (enterCall?.Invoke() ?? true)));
                 if (accept && dialog is null)
@@ -143,6 +153,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     selected.CallId = callId;
                     selected.SessionId = sessionId;
                     selected.Extension = number;
+                    selected.PlaybackGeneration = 0;
                     selected.Seen.Clear();
                     if (assistant) phoneState?.Invoke(number!, true);
                 }
@@ -165,6 +176,21 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     break;
                 case "call.interrupted" when payload.String("reason") == "user_speech":
                     dialog.CancelTurn();
+                    if (payload.Field("generation") is { ValueKind: JsonValueKind.Number } generation &&
+                        generation.TryGetUInt32(out var interruptedGeneration))
+                        dialog.PlaybackGeneration = Math.Max(dialog.PlaybackGeneration, interruptedGeneration);
+                    if (dialog.Phone) phoneStage?.Invoke("Обрабатывает речь");
+                    break;
+                case "call.playback" when dialog.Phone && payload.Field("generation").ValueKind == JsonValueKind.Number &&
+                    payload.Field("generation").TryGetUInt32(out var playbackGeneration) && playbackGeneration >= dialog.PlaybackGeneration:
+                    dialog.PlaybackGeneration = playbackGeneration;
+                    phoneStage?.Invoke(payload.String("status") == "started" ? "Воспроизводит ответ" : "Идёт разговор");
+                    break;
+                case "dialog.error":
+                    if (dialog.Phone) phoneStage?.Invoke("Не удалось распознать речь");
+                    break;
+                case "call.speech_error":
+                    if (dialog.Phone) phoneStage?.Invoke("Сбой озвучивания");
                     break;
                 case "call.ended":
                     EndDialog(dialog);
@@ -183,31 +209,53 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         if (dialog.Phone) phoneState?.Invoke(dialog.Extension!, false);
     }
 
-    private async Task ReplyLoopAsync(DialogState dialog, ChannelWriter<object> outbound, CancellationToken ct)
+    private async Task ReplyLoopAsync(DialogState dialog, ChannelWriter<object> outbound, bool trace, CancellationToken ct)
     {
         await foreach (var turn in dialog.Turns.Reader.ReadAllAsync(ct))
         {
             if (!ReferenceEquals(Volatile.Read(ref dialog.Latest), turn)) continue;
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct, turn.Interruption);
             timeout.CancelAfter(dialog.Phone ? TimeSpan.FromSeconds(45) : TimeSpan.FromMinutes(2));
+            var started = Stopwatch.GetTimestamp();
+            if (trace) await SendTrace("started");
             try
             {
                 report("Ожидание ответа чата…");
-                var text = (dialog.Phone
-                    ? await phoneReply!(turn.CallId, turn.TurnId, turn.Text, timeout.Token)
-                    : await reply(turn.Text, timeout.Token)).Trim();
+                if (dialog.Phone) phoneStage?.Invoke("Формирует ответ");
+                var response = dialog.Phone
+                    ? measuredPhoneReply is not null
+                        ? await measuredPhoneReply(turn.CallId, turn.TurnId, turn.Text, timeout.Token, trace ? ReportMetric : null)
+                        : await phoneReply!(turn.CallId, turn.TurnId, turn.Text, timeout.Token)
+                    : await reply(turn.Text, timeout.Token);
+                var text = response.Trim();
                 if (!ReferenceEquals(Volatile.Read(ref dialog.Latest), turn)) continue;
                 if (text.Length == 0) throw new NotifyError("Чат вернул пустой ответ.");
                 if (text.Length > 1000) text = text[..(char.IsHighSurrogate(text[999]) ? 999 : 1000)];
+                if (trace) await SendTrace("completed", Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 await outbound.WriteAsync(new ReplyFrame(dialog, turn, text), ct);
             }
-            catch (Exception) when (turn.Interruption.IsCancellationRequested) { }
+            catch (Exception) when (turn.Interruption.IsCancellationRequested)
+            {
+                if (trace && !ct.IsCancellationRequested) await SendTrace("interrupted", Stopwatch.GetElapsedTime(started).TotalMilliseconds);
+            }
             catch (Exception error) when (!ct.IsCancellationRequested)
             {
+                if (trace) await SendTrace("failed", Stopwatch.GetElapsedTime(started).TotalMilliseconds);
                 report(error is NotifyError ? error.Message : "Чат недоступен. Проверьте, открыт ли доступ к выбранному чату.");
                 if (dialog.Phone && ReferenceEquals(Volatile.Read(ref dialog.Latest), turn))
                     await outbound.WriteAsync(new ReplyFrame(dialog, turn, "Не удалось получить ответ. Попробуйте повторить вопрос."), ct);
             }
+
+            ValueTask SendTrace(string status, double? durationMs = null) => outbound.WriteAsync(Call("call.trace", new
+            {
+                turn.CallId, turn.SessionId, turn.TurnId, stage = "agent_processing", status, durationMs
+            }), ct);
+
+            void ReportMetric(PhoneTurnMetric metric) => outbound.TryWrite(Call("call.trace", new
+            {
+                turn.CallId, turn.SessionId, turn.TurnId, metric.Stage, metric.Status, metric.DurationMs,
+                metric.Model, metric.AgentThreadId, metric.Tokens
+            }));
         }
     }
 
@@ -272,6 +320,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         internal string? CallId;
         internal string? SessionId;
         internal string? Extension;
+        internal uint PlaybackGeneration;
         internal Turn? Latest;
         internal HashSet<string> Seen { get; } = new(StringComparer.Ordinal);
         internal CancellationTokenSource Interruption { get; private set; } = new();

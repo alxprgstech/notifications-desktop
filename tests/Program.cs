@@ -7,6 +7,12 @@ using System.Text;
 using System.Text.Json;
 using Notify.Desktop;
 
+if (args is ["mcp", "list", "--json"] || args.Contains("app-server") && args.Contains("--strict-config"))
+{
+    await PhoneSessionSpecs.FakeServerAsync(args);
+    return;
+}
+
 if (args is ["--visual", var output])
 {
     Exception? failure = null;
@@ -41,7 +47,8 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
             certificate?.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256) == certificateHash }
     });
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20));
-    await using var assistant = new PhoneCodex(new Codex(Codex.Find()!), Path.GetFullPath(assistantDirectory));
+    using var temporary = new LabDirectory(Path.GetFullPath(assistantDirectory));
+    await using var assistant = new PhoneCodex(new Codex(Codex.Find()!), temporary.Path, ephemeral: true);
     await assistant.WarmAsync(deadline.Token);
     await new AgentBridge(new Uri(labOrigin), token, new Registration(labAgentId, "", "Phone lab", false, [], []),
         new Chat(AgentBridge.PhoneSessionId, PhoneCodex.Name), (_, _) => throw new InvalidOperationException(),
@@ -52,9 +59,9 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
 if (args is ["--chat-instructions", var instructionLab])
 {
     using var instructionDeadline = new CancellationTokenSource(TimeSpan.FromMinutes(2));
-    var directory = Path.GetFullPath(instructionLab);
-    Directory.CreateDirectory(directory);
-    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."));
+    using var temporary = new LabDirectory(Path.GetTempPath());
+    var directory = temporary.Path;
+    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."), LabDirectory.RequireIsolatedProfile(instructionLab));
     string id;
     using (var process = codex.Start(["app-server", "--listen", "stdio://"], directory))
     {
@@ -100,8 +107,9 @@ if (args is ["--phone-context", var labRoot])
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(4));
     var labCancellation = deadline.Token;
-    var directory = Path.Combine(Path.GetFullPath(labRoot), Guid.NewGuid().ToString("N"));
-    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."));
+    using var temporary = new LabDirectory(Path.GetTempPath());
+    var directory = temporary.Path;
+    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."), LabDirectory.RequireIsolatedProfile(labRoot));
     PhoneUsage? usage = null;
     await using var assistant = new PhoneCodex(codex, directory, value => usage = value,
         () => "Запоминай предпочтения собеседника.");
@@ -147,11 +155,12 @@ if (args is ["--phone-context", var labRoot])
     }
 }
 
-if (args is ["--phone-codex"])
+if (args is ["--phone-codex", var phoneLab])
 {
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(3));
-    var directory = Path.Combine(LocalSettings.DirectoryPath, "phone-assistant");
-    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."));
+    using var temporary = new LabDirectory(Path.GetTempPath());
+    var directory = temporary.Path;
+    var codex = new Codex(Codex.Find() ?? throw new Exception("Codex CLI was not detected."), LabDirectory.RequireIsolatedProfile(phoneLab));
     string? threadId = null;
     for (var session = 0; session < 2; session++)
     {
@@ -225,6 +234,7 @@ using (var storage = new System.IO.FileStream(Path.GetTempFileName(), FileMode.O
 }
 
 await UpdateSpecs.RunAsync();
+await PhoneSessionSpecs.RunAsync();
 
 if (args is ["--wss-soak"])
 {
@@ -323,6 +333,7 @@ const string phoneTurnId = "70000000000000000000000000000000";
 const string phoneSession = AgentBridge.PhoneSessionId;
 var phoneStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var phoneInterrupted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var phoneSpeaking = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var phoneEnabled = true;
 var activeCalls = new CallActivity();
 var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-token", registration, new Chat("selected", "Выбранный чат"),
@@ -355,6 +366,9 @@ var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-
         try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
         catch (OperationCanceledException) { phoneInterrupted.TrySetResult(); throw; }
         throw new Exception("Expected the phone turn to be canceled.");
+    }, phoneStage: stage =>
+    {
+        if (stage == "Воспроизводит ответ") phoneSpeaking.TrySetResult();
     });
 var ready = false;
 var run = bridge.RunSessionAsync(client, () => ready = true, ct);
@@ -362,6 +376,7 @@ var run = bridge.RunSessionAsync(client, () => ready = true, ct);
 var hello = await Receive();
 Equal("hello", hello.String("type"));
 Equal(agentId, hello.String("agentId"));
+Equal(JsonValueKind.True, hello.Field("callPlaybackStatus").ValueKind);
 var sessionId = hello.GetProperty("sessions")[0].String("id");
 Equal(phoneSession, hello.GetProperty("sessions")[1].String("id"));
 await Send(new { type = "hello_ack", protocolVersion = protocol, callProtocol = AgentBridge.CallProtocol,
@@ -383,6 +398,8 @@ var phoneSay = await NextControl();
 Equal("call.say", phoneSay.String("type"));
 Equal(phoneCallId, phoneSay.Field("payload").String("callId"));
 Equal("Ответ по телефону", phoneSay.Field("payload").String("text"));
+await Send(Event("call.playback", new { callId = phoneCallId, sessionId = phoneSession, status = "started", generation = 1 }));
+await phoneSpeaking.Task.WaitAsync(ct);
 await Send(Event("dialog.user", new { callId = phoneCallId, sessionId = phoneSession, turnId = firstTurn, text = "Перебивание" }));
 await phoneStarted.Task.WaitAsync(ct);
 await Send(Event("call.interrupted", new { callId = phoneCallId, sessionId = phoneSession, reason = "user_speech" }));
@@ -479,6 +496,35 @@ static void Equal<T>(T expected, T actual)
 {
     if (!EqualityComparer<T>.Default.Equals(expected, actual))
         throw new Exception($"Expected {expected}, got {actual}.");
+}
+
+internal sealed class LabDirectory : IDisposable
+{
+    internal string Path { get; }
+
+    internal LabDirectory(string root)
+    {
+        Path = System.IO.Path.Combine(root, "notify-lab-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path);
+    }
+
+    internal static string RequireIsolatedProfile(string path)
+    {
+        var profile = System.IO.Path.GetFullPath(path);
+        if (!File.Exists(System.IO.Path.Combine(profile, ".notify-test-profile")))
+            throw new InvalidOperationException("Pass a separately authenticated Codex test profile marked .notify-test-profile.");
+        var configured = Environment.GetEnvironmentVariable("CODEX_HOME");
+        var standard = System.IO.Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".codex");
+        if (SamePath(profile, standard) || (configured is not null && SamePath(profile, configured)))
+            throw new InvalidOperationException("The active Codex profile cannot be used for session tests.");
+        return profile;
+
+        static bool SamePath(string first, string second) =>
+            string.Equals(System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(first)),
+                System.IO.Path.TrimEndingDirectorySeparator(System.IO.Path.GetFullPath(second)), StringComparison.OrdinalIgnoreCase);
+    }
+
+    public void Dispose() => Directory.Delete(Path, recursive: true);
 }
 
 internal sealed class McpFixture : HttpMessageHandler

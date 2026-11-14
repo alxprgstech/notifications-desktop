@@ -11,6 +11,7 @@ public partial class MainWindow
     private bool phoneFailed;
     private bool phoneActive;
     private bool phoneMaintaining;
+    private string? phoneCallStage;
     private PhoneCodex? activePhone;
     private int rolloverPercent = 85;
     private string? effectivePhoneInstructions;
@@ -84,6 +85,7 @@ public partial class MainWindow
             return;
         }
         phoneMaintaining = true;
+        PhoneRolloverStatus.Text = compact ? "Сжимаем контекст…" : preserveContext ? "Переносим контекст…" : "Создаём телефонный чат…";
         UpdatePhoneHome();
         try
         {
@@ -91,9 +93,15 @@ public partial class MainWindow
             timeout.CancelAfter(TimeSpan.FromSeconds(90));
             if (compact) await phone.CompactAsync(timeout.Token);
             else await phone.RolloverAsync(preserveContext, timeout.Token);
-            Report(compact ? "Контекст телефонного чата сжат." : "Новый телефонный чат готов.");
+            PhoneRolloverStatus.Text = compact ? "Контекст телефонного чата сжат."
+                : preserveContext ? "Контекст перенесён в новый телефонный чат." : "Новый телефонный чат готов.";
+            Report(PhoneRolloverStatus.Text);
         }
-        catch (Exception error) { Report($"Телефонный чат · {Friendly(error)}"); }
+        catch (Exception error)
+        {
+            PhoneRolloverStatus.Text = $"Не удалось обновить телефонный контекст. {Friendly(error)}";
+            Report(PhoneRolloverStatus.Text);
+        }
         finally
         {
             callActivity.EndMaintenance();
@@ -106,11 +114,11 @@ public partial class MainWindow
     private void UpdatePhoneHome()
     {
         PhoneHomeState.Text = !preferences.PhoneEnabled ? "Отключён"
-            : phoneActive ? "Активный звонок"
+            : phoneActive ? phoneCallStage ?? "Идёт разговор"
             : phoneMaintaining ? "Обновляется контекст"
             : !Volatile.Read(ref phoneEnabled) ? "Ошибка: Codex CLI недоступен"
             : phoneFailed ? "Ошибка подготовки Codex"
-            : phoneReady && agentConnected ? "Готов к звонку"
+            : phoneReady && agentConnected ? "Ожидает звонка"
             : !agentConnected ? "Нет соединения агента" : "Codex готовится…";
         PhoneAssistantStatus.Text = PhoneHomeState.Text;
     }
@@ -121,10 +129,11 @@ public partial class MainWindow
         var percent = usage?.Percent;
         PhoneContextMeter.Visibility = percent is null ? Visibility.Collapsed : Visibility.Visible;
         PhoneContextMeter.Value = Math.Clamp(percent ?? 0, 0, 100);
-        var context = percent is null ? "Нет данных" : $"{usage!.Context:N0} / {usage.Window:N0} ({percent:F0} %)";
-        var total = usage?.Total is long count ? $" · Всего токенов: {count:N0}" : "";
-        PhoneHomeContext.Text = $"Сессия: {PhoneCodex.Name} · Контекст: {context}{total}" +
-            (percent >= 70 ? " · Контекст заполнен на 70 % или более" : "");
+        var context = usage?.Context is long tokens ? $"{tokens:N0} токенов" : "Нет данных";
+        var window = usage?.Window is long size ? $"{size:N0} токенов" : "Нет данных";
+        var percentLabel = percent is double fill ? $"{fill:F0} %" : "Нет данных";
+        PhoneHomeContext.Text = $"Использовано контекста · {context}\nРазмер окна · {window}\nЗаполнение · {percentLabel}";
+        PhoneHomeUsage.Text = usage?.Total is long count ? $"Суммарное потребление · {count:N0} токенов" : "Суммарное потребление · Нет данных";
     });
 
     private static bool IsPhoneThread(Chat chat)
@@ -201,15 +210,23 @@ public partial class MainWindow
         phoneReady = ready;
         phoneFailed = !ready;
         UpdatePhoneHome();
-        if (ready && PhoneHomeContext.Text.Length == 0) ShowPhoneUsage(ct, null);
     });
 
     private void ShowPhoneCall(CancellationToken ct, string number, bool active) => _ = Dispatcher.BeginInvoke(() =>
     {
         if (ct.IsCancellationRequested) return;
         phoneActive = active;
+        phoneCallStage = null;
         UpdatePhoneHome();
         if (!active) _ = MaintainPhoneAsync(preserveContext: true);
         PhoneAssistantCall.Text = $"Номер {number} · {(active ? "звонок активен" : "нет активного звонка")}";
+        PhoneLastCall.Text = active ? $"Номер {number}" : $"Последний разговор завершён · {DateTimeOffset.Now:t}";
+    });
+
+    private void ShowPhoneStage(CancellationToken ct, string stage) => _ = Dispatcher.BeginInvoke(() =>
+    {
+        if (ct.IsCancellationRequested || !phoneActive) return;
+        phoneCallStage = stage;
+        UpdatePhoneHome();
     });
 }
