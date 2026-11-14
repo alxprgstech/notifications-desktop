@@ -333,6 +333,7 @@ const string phoneTurnId = "70000000000000000000000000000000";
 const string phoneSession = AgentBridge.PhoneSessionId;
 var phoneStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var phoneInterrupted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+var phoneSpeaking = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
 var phoneEnabled = true;
 var activeCalls = new CallActivity();
 var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-token", registration, new Chat("selected", "Выбранный чат"),
@@ -365,6 +366,9 @@ var bridge = new AgentBridge(new Uri("https://notify.example.test"), "synthetic-
         try { await Task.Delay(Timeout.InfiniteTimeSpan, token); }
         catch (OperationCanceledException) { phoneInterrupted.TrySetResult(); throw; }
         throw new Exception("Expected the phone turn to be canceled.");
+    }, phoneStage: stage =>
+    {
+        if (stage == "Воспроизводит ответ") phoneSpeaking.TrySetResult();
     });
 var ready = false;
 var run = bridge.RunSessionAsync(client, () => ready = true, ct);
@@ -372,6 +376,7 @@ var run = bridge.RunSessionAsync(client, () => ready = true, ct);
 var hello = await Receive();
 Equal("hello", hello.String("type"));
 Equal(agentId, hello.String("agentId"));
+Equal(JsonValueKind.True, hello.Field("callPlaybackStatus").ValueKind);
 var sessionId = hello.GetProperty("sessions")[0].String("id");
 Equal(phoneSession, hello.GetProperty("sessions")[1].String("id"));
 await Send(new { type = "hello_ack", protocolVersion = protocol, callProtocol = AgentBridge.CallProtocol,
@@ -393,6 +398,8 @@ var phoneSay = await NextControl();
 Equal("call.say", phoneSay.String("type"));
 Equal(phoneCallId, phoneSay.Field("payload").String("callId"));
 Equal("Ответ по телефону", phoneSay.Field("payload").String("text"));
+await Send(Event("call.playback", new { callId = phoneCallId, sessionId = phoneSession, status = "started", generation = 1 }));
+await phoneSpeaking.Task.WaitAsync(ct);
 await Send(Event("dialog.user", new { callId = phoneCallId, sessionId = phoneSession, turnId = firstTurn, text = "Перебивание" }));
 await phoneStarted.Task.WaitAsync(ct);
 await Send(Event("call.interrupted", new { callId = phoneCallId, sessionId = phoneSession, reason = "user_speech" }));

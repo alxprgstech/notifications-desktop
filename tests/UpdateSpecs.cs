@@ -25,6 +25,8 @@ internal static class UpdateSpecs
         var downloads = 0;
         var invalidDigest = false;
         var invalidRedirect = false;
+        var streamed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var blockDownload = false;
         using var http = new HttpClient(new Handler(request =>
         {
             Require(request.Headers.Authorization is null, "Anonymous GitHub request");
@@ -49,7 +51,8 @@ internal static class UpdateSpecs
                     downloads++;
                     return new HttpResponseMessage(HttpStatusCode.OK)
                     {
-                        Content = new ByteArrayContent(invalidDigest ? new byte[payload.Length] : payload)
+                        Content = blockDownload ? new StreamContent(new PausedDownload(payload[0], streamed))
+                            : new ByteArrayContent(invalidDigest ? new byte[payload.Length] : payload)
                     };
                 default: throw new Exception("Untrusted redirect reached the network");
             }
@@ -69,6 +72,11 @@ internal static class UpdateSpecs
             var path = await manager.DownloadAsync(candidate!, progress, deadline.Token);
             Require(progress.Last == 100 && File.ReadAllBytes(path).SequenceEqual(payload), "Download and progress");
             Require(path == await manager.DownloadAsync(candidate!, null, deadline.Token) && downloads == 1, "Verified cache reuse");
+            using (var laterProcess = new HttpClient(new Handler(_ => throw new Exception("Verified file was requested again"))))
+            {
+                var restarted = new UpdateManager(directory.FullName, laterProcess);
+                Require(await restarted.DownloadAsync(candidate!, null, deadline.Token) == path, "Cache is verified after restart");
+            }
             File.WriteAllBytes(path, new byte[payload.Length]);
             invalidDigest = true;
             await Reject(() => manager.DownloadAsync(candidate!, null, deadline.Token));
@@ -78,13 +86,27 @@ internal static class UpdateSpecs
             cancelled.Cancel();
             try { await manager.DownloadAsync(candidate!, null, cancelled.Token); throw new Exception("Cancellation was ignored"); }
             catch (OperationCanceledException) { }
+            invalidRedirect = false;
+            blockDownload = true;
+            using var midTransfer = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+            var transfer = manager.DownloadAsync(candidate!, null, midTransfer.Token);
+            await streamed.Task.WaitAsync(deadline.Token);
+            Require(Directory.EnumerateFiles(directory.FullName, "*.part").Any(), "Partial download must exist before cancellation");
+            await midTransfer.CancelAsync();
+            try { await transfer; throw new Exception("In-flight cancellation was ignored"); }
+            catch (OperationCanceledException) { }
             Require(!Directory.EnumerateFiles(directory.FullName, "*.part").Any(), "Partial download cleanup");
         }
         finally { directory.Delete(recursive: true); }
 
         var calls = new CallActivity();
-        Require(calls.TryEnter() && !calls.TryStop(), "Shutdown must refuse an active call");
+        Require(calls.TryEnter() && !calls.TryStop() && !calls.TryReserveInstall(), "An active call must defer installation");
         calls.Leave();
+        Require(calls.TryReserveInstall() && !calls.TryEnter() && !calls.TryMaintain(), "An installer reservation prevents a new call");
+        calls.ReleaseInstall();
+        Require(calls.TryEnter(), "An installer failure must release the reservation");
+        calls.Leave();
+        Require(calls.TryReserveInstall(), "A later installer must be allowed to retry");
         Require(calls.TryStop() && !calls.TryEnter(), "No invite can enter after accepting installer shutdown");
         Console.WriteLine("PASS: stable release filtering, SHA-256, HTTPS redirects, cache, cancellation and call-safe shutdown.");
 
@@ -125,5 +147,36 @@ internal static class UpdateSpecs
     {
         internal int Last { get; private set; }
         public void Report(int value) => Last = value;
+    }
+
+    private sealed class PausedDownload(byte firstByte, TaskCompletionSource streamed) : Stream
+    {
+        private bool sent;
+        public override bool CanRead => true;
+        public override bool CanSeek => false;
+        public override bool CanWrite => false;
+        public override long Length => throw new NotSupportedException();
+        public override long Position { get => throw new NotSupportedException(); set => throw new NotSupportedException(); }
+        public override ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken ct = default)
+        {
+            if (sent)
+            {
+                streamed.TrySetResult();
+                return new ValueTask<int>(WaitAsync(ct));
+            }
+            sent = true;
+            buffer.Span[0] = firstByte;
+            return ValueTask.FromResult(1);
+        }
+        private static async Task<int> WaitAsync(CancellationToken ct)
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, ct);
+            return 0;
+        }
+        public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+        public override void Flush() => throw new NotSupportedException();
+        public override long Seek(long offset, SeekOrigin origin) => throw new NotSupportedException();
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
     }
 }

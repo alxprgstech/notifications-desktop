@@ -22,8 +22,9 @@ public partial class MainWindow : Window
 
     public MainWindow() : this(visualTest: false) { }
 
-    internal MainWindow(bool visualTest)
+    internal MainWindow(bool visualTest, NotifyHttp? historyFixture = null)
     {
+        this.historyFixture = historyFixture;
         InitializeComponent();
         try { if (!visualTest) preferences = LocalSettings.Read(); }
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
@@ -364,7 +365,8 @@ public partial class MainWindow : Window
         phoneReady = false;
         phoneActive = false;
         phoneFailed = false;
-        PhoneHomeContext.Text = "";
+        PhoneHomeContext.Text = "Заполнение контекста · Нет данных";
+        PhoneHomeUsage.Text = "Суммарное потребление · Нет данных";
         PhoneContextMeter.Visibility = Visibility.Collapsed;
         RefreshPhoneStatus();
         PhoneAssistantCall.Text = "";

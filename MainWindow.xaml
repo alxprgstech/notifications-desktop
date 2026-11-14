@@ -237,23 +237,27 @@
         <StackPanel x:Name="CallsPage" Visibility="Collapsed">
           <TextBlock Text="Звонки" Style="{StaticResource PageTitle}"/>
           <WrapPanel Margin="0,8,0,8">
-            <TextBox x:Name="CallSearch" Width="145" TextChanged="FilterCalls" AutomationProperties.Name="Поиск по звонкам" ToolTip="Дата, ID или источник" Margin="0,0,6,4"/>
-            <DatePicker x:Name="CallDay" SelectedDateChanged="FilterCalls" AutomationProperties.Name="Дата звонка" Margin="0,0,6,4"/>
-            <ComboBox x:Name="CallStatusFilter" SelectedIndex="0" SelectionChanged="FilterCalls" AutomationProperties.Name="Статус звонка" Margin="0,0,6,4">
+            <StackPanel Margin="0,0,6,4"><TextBlock Text="Поиск" Style="{StaticResource Description}"/>
+              <TextBox x:Name="CallSearch" Width="145" TextChanged="FilterCalls" AutomationProperties.Name="Поиск по звонкам" ToolTip="Дата, ID или источник"/>
+            </StackPanel>
+            <StackPanel Margin="0,0,6,4"><TextBlock Text="Дата" Style="{StaticResource Description}"/>
+              <DatePicker x:Name="CallDay" SelectedDateChanged="FilterCalls" AutomationProperties.Name="Дата звонка"/>
+            </StackPanel>
+            <ComboBox x:Name="CallStatusFilter" SelectedIndex="0" SelectionChanged="FilterCalls" AutomationProperties.Name="Статус звонка" VerticalAlignment="Bottom" Margin="0,0,6,4">
               <ComboBoxItem Content="Все статусы" Tag=""/>
               <ComboBoxItem Content="Текущие" Tag="active"/>
               <ComboBoxItem Content="Завершённые" Tag="ended"/>
               <ComboBoxItem Content="Не состоялись" Tag="failed"/>
             </ComboBox>
-            <Button Content="Обновить" Click="RefreshCalls" Margin="0,0,6,4"/>
+            <Button Content="Обновить" Click="RefreshCalls" VerticalAlignment="Bottom" Margin="0,0,6,4"/>
           </WrapPanel>
           <TextBlock x:Name="CallsStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
           <ListBox x:Name="CallsList" SelectionChanged="SelectCall" DisplayMemberPath="Summary" MinHeight="72" MaxHeight="178" Margin="0,6,0,12" AutomationProperties.Name="История звонков"/>
           <TabControl x:Name="CallDetail" Visibility="Collapsed">
-            <TabItem Header="Обзор"><StackPanel Margin="10"><TextBlock x:Name="CallSummary" Style="{StaticResource Description}"/><TextBlock x:Name="CallIdentity" Style="{StaticResource Description}" Margin="0,8,0,0"/></StackPanel></TabItem>
-            <TabItem Header="Таймлайн"><StackPanel Margin="10"><TextBlock x:Name="CallTraceStatus" Style="{StaticResource Description}"/><Canvas x:Name="CallTimeline" Height="49" Background="{DynamicResource AppBackground}" SizeChanged="DrawCallTimeline" Margin="0,8,0,0"/></StackPanel></TabItem>
+            <TabItem Header="Обзор"><StackPanel Margin="10"><TextBlock x:Name="CallSummary" Style="{StaticResource Description}"/><TextBlock x:Name="CallIdentity" Style="{StaticResource Description}" Margin="0,8,0,0"/><TextBlock Text="Средние длительности этапов" FontWeight="SemiBold" Margin="0,12,0,4"/><TextBlock x:Name="CallKeyTimings" Style="{StaticResource Description}"/></StackPanel></TabItem>
+            <TabItem Header="Таймлайн"><StackPanel Margin="10"><TextBlock x:Name="CallTraceStatus" Style="{StaticResource Description}"/><Canvas x:Name="CallTimeline" Height="80" Background="{DynamicResource AppBackground}" SizeChanged="DrawCallTimeline" Margin="0,8,0,0"/></StackPanel></TabItem>
             <TabItem Header="Реплики"><StackPanel Margin="10"><TextBlock x:Name="CallTranscriptStatus" Style="{StaticResource Description}"/><ItemsControl x:Name="CallTurns" Margin="0,6,0,0"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextWrapping="Wrap" Margin="0,2"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></TabItem>
-            <TabItem Header="Подробности"><StackPanel Margin="10"><ListBox x:Name="CallEvents" SelectionChanged="ShowCallEvent" DisplayMemberPath="Label" MaxHeight="220" AutomationProperties.Name="Этапы звонка"/><TextBlock x:Name="CallEventDetails" Style="{StaticResource Description}" Margin="0,8,0,0"/></StackPanel></TabItem>
+            <TabItem x:Name="CallDetailsTab" Header="Подробности"><StackPanel Margin="10"><ListBox x:Name="CallEvents" SelectionChanged="ShowCallEvent" DisplayMemberPath="Label" MaxHeight="220" AutomationProperties.Name="Этапы звонка"/><TextBlock x:Name="CallEventDetails" Style="{StaticResource Description}" Margin="0,8,0,0"/></StackPanel></TabItem>
             <TabItem Header="Диагностика"><Button x:Name="CopyCallReport" Content="Копировать диагностику" Click="CopyCallDiagnostics" IsEnabled="False" HorizontalAlignment="Left" Margin="10"/></TabItem>
           </TabControl>
         </StackPanel>
@@ -294,6 +298,7 @@
               <TextBlock Text="Создавать новый телефонный чат после звонка при заполнении контекста на, %" TextWrapping="Wrap" Margin="0,8,0,0"/>
               <TextBlock Text="При достижении порога Notify переносит контекст после завершения звонка. Диапазон 70–100 %. По умолчанию 85 %. Для переноса нужны данные о заполнении." Style="{StaticResource Description}"/>
               <TextBox x:Name="RolloverPercent" AutomationProperties.Name="Порог переноса в процентах"/>
+              <TextBlock x:Name="PhoneRolloverStatus" Text="Перенос контекста не запущен." Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
               <TextBlock Text="Общие инструкции для всех разговоров" TextWrapping="Wrap"/>
               <TextBlock Text="Правила для телефонного помощника и обращений через выбранный чат Codex." Style="{StaticResource Description}"/>
               <TextBox x:Name="GeneralInstructions" AutomationProperties.Name="Общие инструкции" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>

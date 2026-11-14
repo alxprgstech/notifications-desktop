@@ -85,6 +85,7 @@ public partial class MainWindow
             return;
         }
         phoneMaintaining = true;
+        PhoneRolloverStatus.Text = compact ? "Сжимаем контекст…" : preserveContext ? "Переносим контекст…" : "Создаём телефонный чат…";
         UpdatePhoneHome();
         try
         {
@@ -92,9 +93,15 @@ public partial class MainWindow
             timeout.CancelAfter(TimeSpan.FromSeconds(90));
             if (compact) await phone.CompactAsync(timeout.Token);
             else await phone.RolloverAsync(preserveContext, timeout.Token);
-            Report(compact ? "Контекст телефонного чата сжат." : "Новый телефонный чат готов.");
+            PhoneRolloverStatus.Text = compact ? "Контекст телефонного чата сжат."
+                : preserveContext ? "Контекст перенесён в новый телефонный чат." : "Новый телефонный чат готов.";
+            Report(PhoneRolloverStatus.Text);
         }
-        catch (Exception error) { Report($"Телефонный чат · {Friendly(error)}"); }
+        catch (Exception error)
+        {
+            PhoneRolloverStatus.Text = $"Не удалось обновить телефонный контекст. {Friendly(error)}";
+            Report(PhoneRolloverStatus.Text);
+        }
         finally
         {
             callActivity.EndMaintenance();
@@ -122,8 +129,10 @@ public partial class MainWindow
         var percent = usage?.Percent;
         PhoneContextMeter.Visibility = percent is null ? Visibility.Collapsed : Visibility.Visible;
         PhoneContextMeter.Value = Math.Clamp(percent ?? 0, 0, 100);
-        var context = percent is null ? "Нет данных" : $"{usage!.Context:N0} / {usage.Window:N0} ({percent:F0} %)";
-        PhoneHomeContext.Text = $"Заполнение контекста · {context}";
+        var context = usage?.Context is long tokens ? $"{tokens:N0} токенов" : "Нет данных";
+        var window = usage?.Window is long size ? $"{size:N0} токенов" : "Нет данных";
+        var percentLabel = percent is double fill ? $"{fill:F0} %" : "Нет данных";
+        PhoneHomeContext.Text = $"Использовано контекста · {context}\nРазмер окна · {window}\nЗаполнение · {percentLabel}";
         PhoneHomeUsage.Text = usage?.Total is long count ? $"Суммарное потребление · {count:N0} токенов" : "Суммарное потребление · Нет данных";
     });
 

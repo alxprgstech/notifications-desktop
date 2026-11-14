@@ -180,6 +180,7 @@ public partial class MainWindow
             return;
         }
         installing = true;
+        var reserved = false;
         try
         {
             // Verify again immediately before launching a previously downloaded installer.
@@ -190,11 +191,12 @@ public partial class MainWindow
                 return;
             }
             if (!installRequested || exiting) return;
-            if (callActivity.Busy)
+            if (!callActivity.TryReserveInstall())
             {
                 UpdateStatus.Text = "Установка начнётся, когда телефонный помощник освободится.";
                 return;
             }
+            reserved = true;
             var start = new ProcessStartInfo(pendingInstaller) { UseShellExecute = false, CreateNoWindow = true };
             foreach (var argument in new[] { "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/NOTIFYUPDATE" })
                 start.ArgumentList.Add(argument);
@@ -213,6 +215,7 @@ public partial class MainWindow
         }
         finally
         {
+            if (reserved) callActivity.ReleaseInstall();
             installing = false;
             if (!callActivity.Busy || pendingInstaller is null) installRequested = false;
             UpdateControls();
@@ -228,13 +231,14 @@ internal sealed class CallActivity
     private int active;
     private bool stopping;
     private bool maintaining;
+    private bool installing;
     internal bool Busy { get { lock (gate) return active != 0 || maintaining; } }
 
     internal bool TryEnter()
     {
         lock (gate)
         {
-            if (stopping || maintaining) return false;
+            if (stopping || maintaining || installing) return false;
             active++;
             return true;
         }
@@ -245,11 +249,22 @@ internal sealed class CallActivity
     {
         lock (gate)
         {
-            if (active != 0 || stopping || maintaining) return false;
+            if (active != 0 || stopping || maintaining || installing) return false;
             return maintaining = true;
         }
     }
     internal void EndMaintenance() { lock (gate) maintaining = false; }
+
+    internal bool TryReserveInstall()
+    {
+        lock (gate)
+        {
+            if (active != 0 || stopping || maintaining || installing) return false;
+            return installing = true;
+        }
+    }
+
+    internal void ReleaseInstall() { lock (gate) installing = false; }
 
     internal bool TryStop()
     {

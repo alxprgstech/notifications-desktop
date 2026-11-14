@@ -9,6 +9,7 @@ namespace Notify.Desktop;
 public partial class MainWindow
 {
     private CallRow[] callHistory = [];
+    private readonly NotifyHttp? historyFixture;
     private TraceEvent[] callEvents = [];
     private CancellationTokenSource? callQuery;
     private CancellationTokenSource? callReload;
@@ -16,6 +17,7 @@ public partial class MainWindow
 
     private NotifyHttp CallsApi()
     {
+        if (historyFixture is not null) return historyFixture;
         var origin = LocalSettings.HttpsOrigin(Origin.Text.Trim());
         return new NotifyHttp(origin, RequireToken(origin));
     }
@@ -38,7 +40,12 @@ public partial class MainWindow
         }
         catch (OperationCanceledException) when (request.IsCancellationRequested) { }
         catch (Exception error) when (error is NotifyError or HttpRequestException or JsonException or OperationCanceledException)
-        { if (callReload == request) CallsStatus.Text = $"История недоступна. {Friendly(error)}"; }
+        {
+            if (callReload != request) return;
+            callHistory = [];
+            ApplyCallFilter();
+            CallsStatus.Text = $"История недоступна. {Friendly(error)}";
+        }
         finally { if (callReload == request) callReload = null; }
     }
 
@@ -65,7 +72,9 @@ public partial class MainWindow
     private async void SelectCall(object sender, SelectionChangedEventArgs e)
     {
         if (CallDetail is null) return;
-        callQuery?.Cancel();
+        var previous = callQuery;
+        callQuery = null;
+        previous?.Cancel();
         callReport = null;
         CopyCallReport.IsEnabled = false;
         callEvents = [];
@@ -73,6 +82,7 @@ public partial class MainWindow
         CallEvents.ItemsSource = null;
         CallTurns.ItemsSource = null;
         CallEventDetails.Text = "";
+        CallKeyTimings.Text = "";
         if (CallsList.SelectedItem is not CallRow row)
         {
             CallDetail.Visibility = Visibility.Collapsed;
@@ -92,6 +102,14 @@ public partial class MainWindow
             if (callQuery != request) return;
             callEvents = trace?.Events ?? [];
             CallEvents.ItemsSource = callEvents;
+            CallKeyTimings.Text = string.Join("\n", new[] { "call_active", "stt", "codex_generation", "rtp_playback" }
+                .Select(stage =>
+                {
+                    var durations = callEvents.Where(entry => entry.Stage == stage && entry.Status == "completed")
+                        .Select(entry => entry.DurationMs).OfType<double>().ToArray();
+                    var elapsed = durations.Length == 0 ? "Нет данных" : $"{durations.Average():F0} мс";
+                    return $"{StageName(stage)} · {elapsed}";
+                }));
             CallTraceStatus.Text = callEvents.Length == 0 ? "Нет данных об этапах." :
                 trace?.Truncated == true ? "Достигнут предел записи событий." :
                 row.Status == "ended" ? "Этапы звонка" : "Звонок ещё продолжается.";
@@ -106,7 +124,12 @@ public partial class MainWindow
         }
         catch (OperationCanceledException) when (request.IsCancellationRequested) { }
         catch (Exception error) when (error is NotifyError or HttpRequestException or JsonException or OperationCanceledException)
-        { if (callQuery == request) CallsStatus.Text = $"Данные звонка недоступны. {Friendly(error)}"; }
+        {
+            if (callQuery != request) return;
+            var message = Friendly(error);
+            if (callReport is null) CallTraceStatus.Text = $"Этапы недоступны. {message}";
+            CallTranscriptStatus.Text = $"Реплики недоступны. {message}";
+        }
         finally { if (callQuery == request) callQuery = null; }
     }
 
@@ -117,16 +140,51 @@ public partial class MainWindow
         if (CallTimeline is null) return;
         CallTimeline.Children.Clear();
         if (callEvents.Length == 0) return;
-        var scale = Math.Max(1, CallTimeline.ActualWidth - 15) / Math.Max(1, callEvents.Max(stage => stage.OffsetMs));
+        const double axisLeft = 78;
+        var plotWidth = Math.Max(1, CallTimeline.ActualWidth - axisLeft - 20);
+        var lastEvent = Math.Max(1, callEvents.Max(stage => stage.OffsetMs));
+        var scale = plotWidth / lastEvent;
+        var border = (Brush)Resources["Outline"];
+        var text = (Brush)Resources["SecondaryText"];
+        AddAxisLabel("Asterisk", 0, 0);
+        AddAxisLabel("Агент", 0, 20);
+        AddAxisLabel("Notify API", 0, 40);
+        for (var row = 0; row < 3; row++)
+        {
+            var guide = new Rectangle { Width = plotWidth, Height = 1, Fill = border };
+            Canvas.SetLeft(guide, axisLeft);
+            Canvas.SetTop(guide, 11 + row * 20);
+            CallTimeline.Children.Add(guide);
+        }
+        AddAxisLabel("0", axisLeft, 62);
+        var unit = lastEvent >= 1000 ? $"{lastEvent / 1000:F1} с" : $"{lastEvent:F0} мс";
+        AddAxisLabel(unit, Math.Max(axisLeft + 20, axisLeft + plotWidth - 38), 62);
         foreach (var stage in callEvents)
         {
-            var bar = new Rectangle { Width = 7, Height = 10, RadiusX = 2, RadiusY = 2,
-                Fill = stage.Status is "failed" or "interrupted" ? Brushes.IndianRed : (Brush)Resources["AccentFill"],
+            var bar = new Rectangle { Width = 8, Height = 11, RadiusX = 2, RadiusY = 2,
+                Fill = stage.Status switch
+                {
+                    "failed" => Brushes.IndianRed, "interrupted" => Brushes.Goldenrod,
+                    "cancelled" => text, _ => (Brush)Resources["AccentFill"]
+                },
                 ToolTip = stage.Label };
-            Canvas.SetLeft(bar, stage.OffsetMs * scale);
-            Canvas.SetTop(bar, stage.Source switch { "asterisk" => 4, "agent" => 19, _ => 34 });
-            bar.MouseLeftButtonUp += (_, _) => { CallEvents.SelectedItem = stage; CallEvents.ScrollIntoView(stage); };
+            Canvas.SetLeft(bar, axisLeft + stage.OffsetMs * scale - 4);
+            Canvas.SetTop(bar, stage.Source switch { "asterisk" => 6, "agent" => 26, _ => 46 });
+            bar.MouseLeftButtonUp += (_, _) =>
+            {
+                CallDetail.SelectedItem = CallDetailsTab;
+                CallEvents.SelectedItem = stage;
+                CallEvents.ScrollIntoView(stage);
+            };
             CallTimeline.Children.Add(bar);
+        }
+
+        void AddAxisLabel(string label, double left, double top)
+        {
+            var marker = new TextBlock { Text = label, Foreground = text, FontSize = 12 };
+            Canvas.SetLeft(marker, left);
+            Canvas.SetTop(marker, top);
+            CallTimeline.Children.Add(marker);
         }
     }
 
@@ -134,7 +192,8 @@ public partial class MainWindow
         CallEventDetails.Text = CallEvents.SelectedItem is TraceEvent stage
             ? $"Точка +{stage.OffsetMs:F0} мс · {stage.Source}\nРеплика {stage.TurnId ?? "Нет данных"}\n" +
               $"Отправлено {Number(stage.Frames)} · принято {Number(stage.ReceivedFrames)} · отклонено {Number(stage.DroppedFrames)}\n" +
-              $"Токены {Number(stage.Tokens)}" : "";
+              $"Токены {Number(stage.Tokens)} · модель {stage.Model ?? "Нет данных"}\n" +
+              $"Чат Codex {stage.AgentThreadId ?? "Нет данных"} · ответ {stage.ReplyId ?? "Нет данных"}" : "";
 
     private void CopyCallDiagnostics(object sender, RoutedEventArgs e)
     {
@@ -144,6 +203,19 @@ public partial class MainWindow
     }
 
     private static string Number(long? value) => value?.ToString("N0", CultureInfo.CurrentCulture) ?? "Нет данных";
+
+    private static string StageName(string stage) => stage switch
+    {
+        "call_created" => "Создание звонка", "call_active" => "Установка соединения", "call_ended" => "Завершение звонка",
+        "sip_ringing" => "SIP-вызов", "sip_answered" => "Ответ на SIP-вызов", "rtp_ready" => "Канал RTP готов",
+        "phone_media" => "Подключение аудио телефона", "agent_media" => "Подключение аудио агента",
+        "voice" => "Голос пользователя", "stt" => "Распознавание речи", "agent_delivery" => "Передача реплики агенту",
+        "agent_processing" => "Ответ агента", "agent_first_delta" => "Первая часть ответа Codex",
+        "codex_generation" => "Генерация Codex", "tts" => "Синтез речи", "greeting" => "Приветствие",
+        "playback" => "Отправка аудио по WebSocket", "rtp_playback" => "Отправка ответа по RTP",
+        "rtp_first_in" => "Первый входящий RTP", "rtp_first_out" => "Первая отправка RTP",
+        "rtp_frames" => "Счётчики RTP", "phone_frames" => "Счётчики аудио телефона", _ => stage
+    };
 
     private sealed record CallRow(string Id, string SourceId, string? SessionId, string Direction, string Target,
         long StartedAt, string Status, string? Reason, int DurationMs)
@@ -161,9 +233,14 @@ public partial class MainWindow
 
     private sealed record TraceData(string CallId, TraceEvent[] Events, bool Truncated, long UpdatedAt);
     private sealed record TraceEvent(int Sequence, string Stage, string Status, long At, double OffsetMs, string Source,
-        string? TurnId, double? DurationMs, string? Code, long? Frames, long? ReceivedFrames, long? DroppedFrames, long? Tokens)
+        string? TurnId, double? DurationMs, string? Code, long? Frames, long? ReceivedFrames, long? DroppedFrames, long? Tokens,
+        string? Model, string? AgentThreadId, string? ReplyId)
     {
-        public string Label => $"{Sequence}. {Stage} · {Status}" +
+        public string Label => $"{StageName(Stage)} · {Status switch
+        {
+            "started" => "Начато", "completed" => "Завершено", "failed" => "Ошибка",
+            "cancelled" => "Отменено", "interrupted" => "Прервано", _ => Status
+        }}" +
             (DurationMs is { } duration ? $" · {duration:F0} мс" : "") + (Code is null ? "" : $" · {Code}");
     }
 

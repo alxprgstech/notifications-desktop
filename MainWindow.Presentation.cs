@@ -12,6 +12,7 @@ public partial class MainWindow
     private bool codexInstalled;
     private bool harnessInstalled;
     private bool presentationReady;
+    internal (int Caption, int Text)? CaptionThemeResult { get; private set; }
     private bool agentConnected;
     private bool codexReplying;
     private string? codexFailure;
@@ -67,6 +68,7 @@ public partial class MainWindow
         SetBrush("AccentFill", "#006A70", "#75DED2", SystemColors.HighlightBrush);
         SetBrush("AccentText", "#FFFFFF", "#102A2B", SystemColors.HighlightTextBrush);
         ApplyCaption();
+        DrawCallTimeline();
 
         void SetBrush(string key, string light, string night, Brush contrast)
         {
@@ -86,14 +88,13 @@ public partial class MainWindow
     {
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == 0 || !OperatingSystem.IsWindowsVersionAtLeast(10, 0, 22000)) return;
-        SetColor(35, "Chrome");
-        SetColor(36, "PrimaryText");
+        CaptionThemeResult = (SetColor(35, "Chrome"), SetColor(36, "PrimaryText"));
 
-        void SetColor(int attribute, string brush)
+        int SetColor(int attribute, string brush)
         {
             var color = ((SolidColorBrush)Resources[brush]).Color;
             var value = SystemParameters.HighContrast ? -1 : color.R | color.G << 8 | color.B << 16;
-            _ = DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int));
+            return DwmSetWindowAttribute(handle, attribute, ref value, sizeof(int));
         }
     }
 

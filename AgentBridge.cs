@@ -12,7 +12,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     Func<string, string, string, CancellationToken, Task<string>>? phoneReply = null,
     Func<bool>? phoneEnabled = null, Action<string, bool>? phoneState = null, Func<bool>? phoneReady = null,
     Action<string>? phoneStage = null,
-    Func<string, string, string, CancellationToken, Action<double>?, Task<string>>? measuredPhoneReply = null,
+    Func<string, string, string, CancellationToken, Action<PhoneTurnMetric>?, Task<string>>? measuredPhoneReply = null,
     bool ordinaryChatReady = true)
 {
     internal const string PhoneSessionId = "notify-phone-assistant";
@@ -76,7 +76,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         {
             type = "hello", protocolVersion = Protocol, eventId = Id(), agentId = registration.AgentId,
             name = "ALXPRGS Notify Desktop", capabilities = new[] { "realtime_audio" },
-            callProtocols = new[] { CallProtocol }, sessions = Sessions(), client = "alxprgs-notify-desktop"
+            callProtocols = new[] { CallProtocol }, sessions = Sessions(), client = "alxprgs-notify-desktop",
+            callPlaybackStatus = phoneStage is not null
         }, opening.Token);
         var buffer = new byte[MaxMessage + 1];
         var hello = await ReceiveAsync(socket, buffer, opening.Token);
@@ -152,6 +153,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     selected.CallId = callId;
                     selected.SessionId = sessionId;
                     selected.Extension = number;
+                    selected.PlaybackGeneration = 0;
                     selected.Seen.Clear();
                     if (assistant) phoneState?.Invoke(number!, true);
                 }
@@ -174,7 +176,15 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     break;
                 case "call.interrupted" when payload.String("reason") == "user_speech":
                     dialog.CancelTurn();
+                    if (payload.Field("generation") is { ValueKind: JsonValueKind.Number } generation &&
+                        generation.TryGetUInt32(out var interruptedGeneration))
+                        dialog.PlaybackGeneration = Math.Max(dialog.PlaybackGeneration, interruptedGeneration);
                     if (dialog.Phone) phoneStage?.Invoke("Обрабатывает речь");
+                    break;
+                case "call.playback" when dialog.Phone && payload.Field("generation").ValueKind == JsonValueKind.Number &&
+                    payload.Field("generation").TryGetUInt32(out var playbackGeneration) && playbackGeneration >= dialog.PlaybackGeneration:
+                    dialog.PlaybackGeneration = playbackGeneration;
+                    phoneStage?.Invoke(payload.String("status") == "started" ? "Воспроизводит ответ" : "Идёт разговор");
                     break;
                 case "dialog.error":
                     if (dialog.Phone) phoneStage?.Invoke("Не удалось распознать речь");
@@ -214,7 +224,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                 if (dialog.Phone) phoneStage?.Invoke("Формирует ответ");
                 var response = dialog.Phone
                     ? measuredPhoneReply is not null
-                        ? await measuredPhoneReply(turn.CallId, turn.TurnId, turn.Text, timeout.Token, trace ? FirstDelta : null)
+                        ? await measuredPhoneReply(turn.CallId, turn.TurnId, turn.Text, timeout.Token, trace ? ReportMetric : null)
                         : await phoneReply!(turn.CallId, turn.TurnId, turn.Text, timeout.Token)
                     : await reply(turn.Text, timeout.Token);
                 var text = response.Trim();
@@ -241,9 +251,10 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                 turn.CallId, turn.SessionId, turn.TurnId, stage = "agent_processing", status, durationMs
             }), ct);
 
-            void FirstDelta(double durationMs) => outbound.TryWrite(Call("call.trace", new
+            void ReportMetric(PhoneTurnMetric metric) => outbound.TryWrite(Call("call.trace", new
             {
-                turn.CallId, turn.SessionId, turn.TurnId, stage = "agent_first_delta", status = "completed", durationMs
+                turn.CallId, turn.SessionId, turn.TurnId, metric.Stage, metric.Status, metric.DurationMs,
+                metric.Model, metric.AgentThreadId, metric.Tokens
             }));
         }
     }
@@ -309,6 +320,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
         internal string? CallId;
         internal string? SessionId;
         internal string? Extension;
+        internal uint PlaybackGeneration;
         internal Turn? Latest;
         internal HashSet<string> Seen { get; } = new(StringComparer.Ordinal);
         internal CancellationTokenSource Interruption { get; private set; } = new();
