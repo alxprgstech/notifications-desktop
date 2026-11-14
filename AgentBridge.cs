@@ -12,7 +12,8 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
     Func<string, string, string, CancellationToken, Task<string>>? phoneReply = null,
     Func<bool>? phoneEnabled = null, Action<string, bool>? phoneState = null, Func<bool>? phoneReady = null,
     Action<string>? phoneStage = null,
-    Func<string, string, string, CancellationToken, Action<double>?, Task<string>>? measuredPhoneReply = null)
+    Func<string, string, string, CancellationToken, Action<double>?, Task<string>>? measuredPhoneReply = null,
+    bool ordinaryChatReady = true)
 {
     internal const string PhoneSessionId = "notify-phone-assistant";
     private const string Protocol = "alxprgs.notify.agent.v1";
@@ -114,9 +115,13 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
 
     private bool PhoneEnabled => phoneReply is not null && (phoneEnabled?.Invoke() ?? true);
 
-    private object[] Sessions() => PhoneEnabled
-        ? [new { id = session.Id, name = session.Name }, new { id = PhoneSessionId, name = PhoneCodex.Name }]
-        : [new { id = session.Id, name = session.Name }];
+    private object[] Sessions()
+    {
+        var sessions = new List<object>(2);
+        if (ordinaryChatReady) sessions.Add(new { id = session.Id, name = session.Name });
+        if (PhoneEnabled && (phoneReady?.Invoke() ?? true)) sessions.Add(new { id = PhoneSessionId, name = PhoneCodex.Name });
+        return sessions.ToArray();
+    }
 
     private async Task ReadLoopAsync(WebSocket socket, byte[] buffer, ChannelWriter<object> outbound,
         DialogState chatDialog, DialogState phoneDialog, CancellationToken ct)
@@ -139,7 +144,7 @@ internal sealed class AgentBridge(Uri origin, string token, Registration registr
                     (dialog == phoneDialog || (PhoneEnabled && (phoneReady?.Invoke() ?? true))) &&
                     payload.String("target") == "asterisk" && payload.String("securityLevel") == "standard" &&
                     number is { Length: >= 2 and <= 8 } && number.All(char.IsAsciiDigit)
-                    : sessionId is null || sessionId == session.Id;
+                    : ordinaryChatReady && (sessionId is null || sessionId == session.Id);
                 var accept = routeMatches && payload.String("mode") == "conversation" &&
                     (dialog == selected || (dialog is null && selected.CallId is null && (enterCall?.Invoke() ?? true)));
                 if (accept && dialog is null)

@@ -178,7 +178,7 @@ public partial class MainWindow
         var selected = connectedChat ?? (harness ? null : preferences.Chat);
         HomePrimaryChat.Text = selected?.Name ?? "Чат не выбран";
         HomePrimaryState.Text = selected is null ? "Выберите чат в разделе «Подключения»."
-            : agentConnected ? "Сюда поступают реплики обычного разговора." : "Сессия не подключена.";
+            : agentConnected && connectedChat is not null ? "Сюда поступают реплики обычного разговора." : "Сессия не подключена.";
     }
 
     private async Task<string> ReplyToCodexAsync(Codex codex, Chat chat, string text, CancellationToken lifetime, CancellationToken ct)

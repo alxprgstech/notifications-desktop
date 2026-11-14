@@ -76,7 +76,7 @@ public partial class MainWindow : Window
             try
             {
                 if (LocalSettings.ReadToken(LocalSettings.HttpsOrigin(preferences.Origin)) is not null &&
-                    (preferences.Client == "Harness" || preferences.Chat is not null))
+                    (preferences.Client == "Harness" || preferences.Chat is not null || preferences.PhoneEnabled))
                     await ConnectAsync(installMcp: false);
             }
             catch (Exception error) { Report(Friendly(error)); }
@@ -144,15 +144,21 @@ public partial class MainWindow : Window
         var token = RequireToken(origin);
         var client = Client.SelectedIndex == 0 ? "Codex" : "Harness";
         var chat = Chats.SelectedItem as Chat;
+        var allowPhoneWithoutChat = !installMcp && preferences.PhoneEnabled;
         Codex? codex = null;
+        var ordinaryChatReady = true;
         if (client == "Codex")
         {
             codex = RequireCodex();
             if (chat is null)
             {
-                if (Chats.Items.Count == 0) await LoadChatsAsync(ct);
-                else ChatStatus.Text = "Выберите чат и нажмите «Подключить».";
-                return;
+                ordinaryChatReady = false;
+                if (!allowPhoneWithoutChat)
+                {
+                    if (Chats.Items.Count == 0) await LoadChatsAsync(ct);
+                    else ChatStatus.Text = "Выберите чат и нажмите «Подключить».";
+                    return;
+                }
             }
         }
 
@@ -168,17 +174,19 @@ public partial class MainWindow : Window
             try { await codex.CheckChatAsync(chat, ct); }
             catch (NotifyError error)
             {
+                ordinaryChatReady = false;
                 ChatStatus.Text = error.Message;
                 if (bridgeCancellation is null)
                 {
                     codexFailure = error.Message == Codex.SignInRequired ? "Не авторизован" : "Недоступен";
                     UpdateClientStates();
                 }
-                throw;
+                if (!preferences.PhoneEnabled) throw;
+                Report("Основной чат недоступен. Подключаем телефонного помощника.");
             }
-            ChatStatus.Text = "Чат доступен для подключения.";
+            if (ordinaryChatReady) ChatStatus.Text = "Чат доступен для подключения.";
         }
-        if (codex is not null && installMcp)
+        if (codex is not null && installMcp && ordinaryChatReady)
         {
             await codex.SetupMcpAsync(ct);
             try
@@ -206,8 +214,10 @@ public partial class MainWindow : Window
         {
             try
             {
-                if (codex is not null && chat is not null)
-                    await RunBridgeAsync(chat, (text, cancellation) => ReplyToCodexAsync(codex, chat, text, lifetime.Token, cancellation), lifetime.Token);
+                if (codex is not null)
+                    await RunBridgeAsync(chat ?? new Chat("", ""), chat is null
+                        ? (_, _) => throw new NotifyError("Основной чат Codex не выбран.")
+                        : (text, cancellation) => ReplyToCodexAsync(codex, chat, text, lifetime.Token, cancellation), lifetime.Token);
                 else
                     await new HarnessLink(Report).RunAsync(RunBridgeAsync, lifetime.Token);
             }
@@ -229,7 +239,7 @@ public partial class MainWindow : Window
             _ = Dispatcher.BeginInvoke(() =>
             {
                 if (cancellation.IsCancellationRequested) return;
-                connectedChat = bound;
+                connectedChat = ordinaryChatReady ? bound : null;
                 UpdateClientStates();
             });
             var executable = Codex.Find();
@@ -249,7 +259,8 @@ public partial class MainWindow : Window
                     phoneState: (number, active) => ShowPhoneCall(cancellation, number, active),
                     phoneReady: () => phone?.Ready == true,
                     phoneStage: stage => ShowPhoneStage(cancellation, stage),
-                    measuredPhoneReply: phone is null ? null : phone.ReplyAsync).RunAsync(cancellation);
+                    measuredPhoneReply: phone is null ? null : phone.ReplyAsync,
+                    ordinaryChatReady: ordinaryChatReady).RunAsync(cancellation);
             }
             finally
             {
