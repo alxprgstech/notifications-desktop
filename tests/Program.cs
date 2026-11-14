@@ -32,7 +32,7 @@ if (args is ["--github-update"])
     return;
 }
 
-if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAgentId])
+if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAgentId, var assistantDirectory])
 {
     var token = Environment.GetEnvironmentVariable("NOTIFY_PHONE_LAB_TOKEN") ?? throw new Exception("Missing synthetic lab credential.");
     using var transport = new HttpMessageInvoker(new SocketsHttpHandler
@@ -41,7 +41,7 @@ if (args is ["--phone-agent-lab", var labOrigin, var certificateHash, var labAge
             certificate?.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256) == certificateHash }
     });
     using var deadline = new CancellationTokenSource(TimeSpan.FromMinutes(20));
-    await using var assistant = new PhoneCodex(new Codex(Codex.Find()!), Path.Combine(LocalSettings.DirectoryPath, "phone-assistant"));
+    await using var assistant = new PhoneCodex(new Codex(Codex.Find()!), Path.GetFullPath(assistantDirectory));
     await assistant.WarmAsync(deadline.Token);
     await new AgentBridge(new Uri(labOrigin), token, new Registration(labAgentId, "", "Phone lab", false, [], []),
         new Chat(AgentBridge.PhoneSessionId, PhoneCodex.Name), (_, _) => throw new InvalidOperationException(),
