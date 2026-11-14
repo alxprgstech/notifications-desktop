@@ -1,7 +1,6 @@
 using System.Diagnostics;
 using System.Reflection;
 using System.Windows;
-using Forms = System.Windows.Forms;
 
 namespace Notify.Desktop;
 
@@ -14,10 +13,14 @@ public partial class MainWindow
     private string? pendingInstaller;
     private string? dismissedVersion;
     private CancellationTokenSource? updateCheck;
+    private CancellationTokenSource? updateDownload;
     private bool installRequested, installing;
+    private static string InstalledVersion => typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!
+        .InformationalVersion.Split('+')[0];
 
     private void StartUpdates()
     {
+        InstalledUpdateVersion.Text = $"Установлена версия {InstalledVersion}";
         _ = RunUpdateChecksAsync(appLifetime.Token);
     }
 
@@ -37,23 +40,23 @@ public partial class MainWindow
 
     private async Task CheckUpdatesAsync(bool manual)
     {
-        if (exiting || installing || installRequested || updateCheck is not null) return;
+        if (exiting || installing || installRequested || updateCheck is not null || updateDownload is not null) return;
         if (manual) dismissedVersion = null;
         using var check = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         updateCheck = check;
-        check.CancelAfter(TimeSpan.FromMinutes(10));
-        CancelDownload.IsEnabled = true;
+        check.CancelAfter(TimeSpan.FromSeconds(45));
+        UpdateControls();
         UpdateStatus.Text = "Проверяем GitHub Releases…";
         try
         {
-            var installed = typeof(Program).Assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()!.InformationalVersion;
-            var release = await updates.CheckAsync(installed, check.Token);
+            var release = await updates.CheckAsync(InstalledVersion, check.Token);
+            LatestUpdateVersion.Text = $"Последняя стабильная версия · {updates.LatestStableVersion ?? "Нет данных"}";
             if (release is null || release.Version == dismissedVersion)
             {
                 pendingUpdate = null;
                 pendingInstaller = null;
                 UpdateStatus.Text = release is null ? "Доступных обновлений нет." : $"Версия {release.Version} отложена.";
-                UpdateOffer.Visibility = Visibility.Collapsed;
+                UpdateIntegrity.Text = "Установщик не загружен.";
                 return;
             }
             if (release == pendingUpdate && pendingInstaller is not null)
@@ -61,19 +64,11 @@ public partial class MainWindow
                 UpdateStatus.Text = $"Версия {release.Version} готова к установке.";
                 return;
             }
-            UpdateOffer.Visibility = Visibility.Collapsed;
             pendingInstaller = null;
-            var progress = new Progress<int>(percent =>
-            {
-                if (updateCheck == check) UpdateStatus.Text = $"Скачиваем версию {release.Version} · {percent}%";
-            });
-            pendingInstaller = await updates.DownloadAsync(release, progress, check.Token);
             pendingUpdate = release;
             UpdateNotes.Text = release.Notes.Length <= 6000 ? release.Notes : release.Notes[..6000] + "…";
-            UpdateOffer.Visibility = Visibility.Visible;
-            UpdateStatus.Text = $"Версия {release.Version} готова к установке.";
-            tray.ShowBalloonTip(6500, $"Notify Desktop {release.Version}", "Обновление скачано. Откройте настройки для установки.",
-                Forms.ToolTipIcon.Info);
+            UpdateStatus.Text = $"Доступна версия {release.Version}.";
+            UpdateIntegrity.Text = "Установщик не загружен.";
         }
         catch (OperationCanceledException)
         {
@@ -81,29 +76,81 @@ public partial class MainWindow
         }
         catch (Exception error) when (error is HttpRequestException or IOException or JsonException or InvalidOperationException or UnauthorizedAccessException)
         {
-            UpdateStatus.Text = "Не удалось проверить или скачать обновление. Повторите проверку позже.";
+            UpdateStatus.Text = "Не удалось проверить обновления. Повторите проверку позже.";
         }
         finally
         {
             updateCheck = null;
-            CancelDownload.IsEnabled = false;
+            UpdateCheckedAt.Text = $"Последняя проверка · {DateTimeOffset.Now:g}";
+            UpdateControls();
         }
     }
 
-    private void CancelUpdate(object sender, RoutedEventArgs e) => updateCheck?.Cancel();
+    private async void DownloadUpdate(object sender, RoutedEventArgs e)
+    {
+        if (pendingUpdate is not { } release || updateCheck is not null || updateDownload is not null || exiting) return;
+        using var download = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
+        updateDownload = download;
+        download.CancelAfter(TimeSpan.FromMinutes(10));
+        UpdateStatus.Text = $"Скачиваем версию {release.Version}…";
+        UpdateIntegrity.Text = "Проверка SHA-256 ожидает завершения загрузки.";
+        UpdateControls();
+        try
+        {
+            var progress = new Progress<int>(percent =>
+            {
+                if (updateDownload == download) UpdateStatus.Text = $"Скачиваем версию {release.Version} · {percent}%";
+            });
+            pendingInstaller = await updates.DownloadAsync(release, progress, download.Token);
+            UpdateStatus.Text = $"Версия {release.Version} готова к установке.";
+            UpdateIntegrity.Text = "SHA-256 подтверждён.";
+        }
+        catch (OperationCanceledException)
+        {
+            UpdateStatus.Text = "Загрузка остановлена.";
+            UpdateIntegrity.Text = "Установщик не загружен.";
+        }
+        catch (Exception error) when (error is HttpRequestException or IOException or UnauthorizedAccessException)
+        {
+            UpdateStatus.Text = "Загрузка не завершена. Повторите попытку.";
+            UpdateIntegrity.Text = error is InvalidDataException ? "Проверка файла не пройдена." : "SHA-256 не проверен.";
+        }
+        finally
+        {
+            updateDownload = null;
+            UpdateControls();
+        }
+    }
+
+    private void UpdateControls()
+    {
+        var idle = updateCheck is null && updateDownload is null && !installing && !installRequested;
+        CheckForUpdates.IsEnabled = idle;
+        CancelDownload.IsEnabled = updateDownload is not null;
+        UpdateOffer.Visibility = pendingUpdate is not null && pendingUpdate.Version != dismissedVersion
+            ? Visibility.Visible : Visibility.Collapsed;
+        DownloadInstaller.Visibility = pendingInstaller is null ? Visibility.Visible : Visibility.Collapsed;
+        DownloadInstaller.IsEnabled = idle;
+        InstallInstaller.IsEnabled = idle && pendingInstaller is not null;
+        DeferUpdate.IsEnabled = updateCheck is null && updateDownload is null && !installing;
+    }
+
+    private void CancelUpdate(object sender, RoutedEventArgs e) => updateDownload?.Cancel();
 
     private void DismissUpdate(object sender, RoutedEventArgs e)
     {
         if (installing) return;
         installRequested = false;
         dismissedVersion = pendingUpdate?.Version;
-        UpdateOffer.Visibility = Visibility.Collapsed;
         UpdateStatus.Text = $"Версия {dismissedVersion} отложена.";
+        UpdateControls();
     }
 
     private async void InstallUpdate(object sender, RoutedEventArgs e)
     {
+        if (pendingInstaller is null || installing || installRequested || updateCheck is not null || updateDownload is not null) return;
         installRequested = true;
+        UpdateControls();
         await InstallWhenIdleAsync();
     }
 
@@ -137,7 +184,11 @@ public partial class MainWindow
         {
             // Verify again immediately before launching a previously downloaded installer.
             if (!await UpdateManager.MatchesAsync(pendingInstaller, pendingUpdate, appLifetime.Token))
-                throw new InvalidDataException("Installer SHA-256 mismatch.");
+            {
+                UpdateIntegrity.Text = "SHA-256 не совпал. Скачайте установщик снова.";
+                pendingInstaller = null;
+                return;
+            }
             if (!installRequested || exiting) return;
             if (callActivity.Busy)
             {
@@ -156,12 +207,15 @@ public partial class MainWindow
         catch (OperationCanceledException) when (appLifetime.IsCancellationRequested) { }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or System.ComponentModel.Win32Exception)
         {
-            UpdateStatus.Text = "Установщик недоступен. Проверьте обновления ещё раз.";
+            UpdateStatus.Text = "Установщик недоступен. Скачайте его снова.";
+            UpdateIntegrity.Text = "Повторная проверка файла не завершена.";
+            pendingInstaller = null;
         }
         finally
         {
             installing = false;
-            if (!callActivity.Busy) installRequested = false;
+            if (!callActivity.Busy || pendingInstaller is null) installRequested = false;
+            UpdateControls();
         }
     }
 

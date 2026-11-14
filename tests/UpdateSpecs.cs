@@ -61,6 +61,10 @@ internal static class UpdateSpecs
             var candidate = await manager.CheckAsync("2.8.9+installed.1", deadline.Token);
             Require(candidate?.Version == "2.10.0", "Highest complete stable release");
             Require(await manager.CheckAsync("2.8.9+installed.1", deadline.Token) == candidate, "304 preserves release");
+            Require(await manager.CheckAsync("2.10.0", deadline.Token) is null, "No newer installable release");
+            Require(manager.LatestStableVersion == "6.0.0", "Newest stable tag is visible even when its installer is invalid");
+            Require(downloads == 0 && !Directory.EnumerateFileSystemEntries(directory.FullName).Any(),
+                "Release checks must neither fetch nor cache an installer");
             var progress = new ProgressCapture();
             var path = await manager.DownloadAsync(candidate!, progress, deadline.Token);
             Require(progress.Last == 100 && File.ReadAllBytes(path).SequenceEqual(payload), "Download and progress");

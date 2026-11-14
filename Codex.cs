@@ -2,7 +2,7 @@ using System.Diagnostics;
 
 namespace Notify.Desktop;
 
-internal sealed class Codex(string executable)
+internal sealed class Codex(string executable, string? profileDirectory = null)
 {
     private const string ChatInUse = "Этот чат открыт в другом процессе Codex. Освободите чат или выберите другой и нажмите «Подключить».";
     private const string ChatUnavailable = "Этот чат недоступен локальному Codex. Выберите другой сохранённый чат.";
@@ -177,6 +177,7 @@ internal sealed class Codex(string executable)
             StandardOutputEncoding = Encoding.UTF8, WorkingDirectory = directory ?? Environment.CurrentDirectory
         };
         foreach (var arg in arguments) start.ArgumentList.Add(arg);
+        if (profileDirectory is not null) start.Environment["CODEX_HOME"] = profileDirectory;
         if (phone)
         {
             foreach (var name in new[] { "OPENAI_API_KEY", "CODEX_API_KEY", "OPENAI_BASE_URL",

@@ -92,6 +92,15 @@ internal sealed class NotifyHttp(Uri origin, string token, HttpClient? transport
         return request;
     }
 
+    internal async Task<T?> GetAsync<T>(string path, CancellationToken ct) where T : class
+    {
+        using var request = Request(HttpMethod.Get, path);
+        using var response = await Transport.SendAsync(request, ct);
+        if (response.StatusCode == System.Net.HttpStatusCode.NotFound) return null;
+        if (!response.IsSuccessStatusCode) throw new NotifyError($"Notify вернул HTTP {(int)response.StatusCode}.");
+        return JsonSerializer.Deserialize<T>(await response.Content.ReadAsByteArrayAsync(ct), LocalSettings.Json);
+    }
+
     internal async Task<Registration> RegistrationAsync(CancellationToken ct)
     {
         using var request = Request(HttpMethod.Get, "/api/v1/agents/self");

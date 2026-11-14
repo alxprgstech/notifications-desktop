@@ -3,3 +3,5 @@ obj/
 artifacts/
 .vs/
 *.user
+
+/AGENTS.override.md

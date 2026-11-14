@@ -226,6 +226,12 @@ public partial class MainWindow : Window
 
         async Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation)
         {
+            _ = Dispatcher.BeginInvoke(() =>
+            {
+                if (cancellation.IsCancellationRequested) return;
+                connectedChat = bound;
+                UpdateClientStates();
+            });
             var executable = Codex.Find();
             await using var phone = executable is null ? null :
                 new PhoneCodex(new Codex(executable), PhoneDirectory, usage => ShowPhoneUsage(cancellation, usage),
@@ -241,13 +247,20 @@ public partial class MainWindow : Window
                     phoneReply: phone is null ? null : phone.ReplyAsync,
                     phoneEnabled: () => Volatile.Read(ref phoneEnabled),
                     phoneState: (number, active) => ShowPhoneCall(cancellation, number, active),
-                    phoneReady: () => phone?.Ready == true).RunAsync(cancellation);
+                    phoneReady: () => phone?.Ready == true,
+                    phoneStage: stage => ShowPhoneStage(cancellation, stage),
+                    measuredPhoneReply: phone is null ? null : phone.ReplyAsync).RunAsync(cancellation);
             }
             finally
             {
                 Volatile.Write(ref activePhone, null);
                 await warmupLifetime.CancelAsync();
                 await warmup;
+                _ = Dispatcher.BeginInvoke(() =>
+                {
+                    if (ReferenceEquals(connectedChat, bound)) connectedChat = null;
+                    UpdateClientStates();
+                });
             }
         }
     });

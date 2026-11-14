@@ -103,6 +103,9 @@
                        AutomationProperties.Name="Подключения">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE71B;" Margin="0,0,8,0"/><TextBlock Text="Подключения"/></StackPanel>
           </RadioButton>
+          <RadioButton x:Name="CallsNav" Style="{StaticResource NavItem}" GroupName="Pages" Tag="4" Checked="Navigate" AutomationProperties.Name="Звонки">
+            <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE717;" Margin="0,0,8,0"/><TextBlock Text="Звонки"/></StackPanel>
+          </RadioButton>
           <RadioButton Style="{StaticResource NavItem}" GroupName="Pages" Tag="2" Checked="Navigate"
                        AutomationProperties.Name="Диагностика">
             <StackPanel Orientation="Horizontal"><TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE9D9;" Margin="0,0,8,0"/><TextBlock Text="Диагностика"/></StackPanel>
@@ -118,43 +121,29 @@
       <Grid Margin="28,22,28,24" MaxWidth="1060">
         <StackPanel x:Name="HomePage">
           <TextBlock Text="Главная" Style="{StaticResource PageTitle}"/>
-          <TextBlock Text="Состояние сервера, клиентов и агентского соединения." Style="{StaticResource Description}" Margin="0,0,0,20"/>
-          <UniformGrid Columns="2">
-            <Border Style="{StaticResource Card}" Margin="0,0,6,12">
-              <StackPanel>
-                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE753;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="Сервер Notify" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
-                <TextBlock x:Name="NotifyState" Text="Не проверен" Style="{StaticResource Description}"/>
+          <Border Style="{StaticResource Card}" Margin="0,12,0,12">
+            <Grid>
+              <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition Width="3*"/></Grid.ColumnDefinitions>
+              <StackPanel Margin="0,0,16,0">
+                <TextBlock Text="Клиент" Style="{StaticResource Description}"/>
+                <TextBlock x:Name="HomeClient" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock x:Name="HomeClientState" Style="{StaticResource Description}"/>
               </StackPanel>
-            </Border>
-            <Border Style="{StaticResource Card}" Margin="6,0,0,12">
-              <StackPanel>
-                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE774;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="Соединение агента" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,9,0,3"/>
-                <TextBlock x:Name="SocketState" Text="Отключён" Style="{StaticResource Description}"/>
+              <StackPanel Grid.Column="1">
+                <TextBlock Text="Основная сессия" Style="{StaticResource Description}"/>
+                <TextBlock x:Name="HomePrimaryChat" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+                <TextBlock x:Name="HomePrimaryState" Style="{StaticResource Description}"/>
               </StackPanel>
-            </Border>
-            <Border Style="{StaticResource Card}" Margin="0,0,6,12">
-              <StackPanel>
-                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE756;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="Codex" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
-                <TextBlock x:Name="CodexState" Style="{StaticResource Description}"/>
-                <TextBlock x:Name="CurrentCodexChat" Style="{StaticResource Description}"/>
-              </StackPanel>
-            </Border>
-            <Border Style="{StaticResource Card}" Margin="6,0,0,12">
-              <StackPanel>
-                <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE8F4;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="Harness" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
-                <TextBlock x:Name="HarnessState" Style="{StaticResource Description}"/>
-              </StackPanel>
-            </Border>
-          </UniformGrid>
+            </Grid>
+          </Border>
           <Border Style="{StaticResource Card}" Margin="0,0,0,12">
             <StackPanel>
-              <TextBlock Text="Телефонный помощник · 7820" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+              <TextBlock Text="Телефонный помощник" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
               <TextBlock x:Name="PhoneHomeState" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
-              <TextBlock x:Name="PhoneHomeContext" Style="{StaticResource Description}"/>
+              <TextBlock Text="Разговоры с Asterisk продолжаются в отдельном телефонном чате Codex." Style="{StaticResource Description}" Margin="0,4,0,8"/>
+              <TextBlock x:Name="PhoneHomeContext" Text="Заполнение контекста · Нет данных" Style="{StaticResource Description}"/>
+              <TextBlock x:Name="PhoneHomeUsage" Text="Суммарное потребление · Нет данных" Style="{StaticResource Description}"/>
+              <TextBlock x:Name="PhoneLastCall" Text="Последний разговор · Нет данных" Style="{StaticResource Description}"/>
               <ProgressBar x:Name="PhoneContextMeter" Maximum="100" Height="5" Margin="0,8,0,0" Visibility="Collapsed"
                            AutomationProperties.Name="Заполнение контекста телефонного чата"/>
             </StackPanel>
@@ -233,16 +222,40 @@
           <Border Style="{StaticResource Card}">
             <StackPanel>
               <TextBlock Text="Состояние подсистем" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
-              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=NotifyState, StringFormat='Сервер Notify: {0}'}"/>
-              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=SocketState, StringFormat='Соединение агента: {0}'}"/>
-              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=CodexState, StringFormat='Codex: {0}'}"/>
-              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=HarnessState, StringFormat='Harness: {0}'}"/>
+              <StackPanel Orientation="Horizontal"><TextBlock Text="Сервер Notify · "/><TextBlock x:Name="NotifyState" Text="Не проверен" Style="{StaticResource Description}"/></StackPanel>
+              <StackPanel Orientation="Horizontal"><TextBlock Text="Соединение агента · "/><TextBlock x:Name="SocketState" Text="Отключён" Style="{StaticResource Description}"/></StackPanel>
+              <StackPanel Orientation="Horizontal"><TextBlock Text="Codex · "/><TextBlock x:Name="CodexState" Style="{StaticResource Description}"/></StackPanel>
+              <TextBlock x:Name="CurrentCodexChat" Style="{StaticResource Description}"/>
+              <StackPanel Orientation="Horizontal"><TextBlock Text="Harness · "/><TextBlock x:Name="HarnessState" Style="{StaticResource Description}"/></StackPanel>
               <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=PhoneHomeState, StringFormat='Телефонный помощник: {0}'}"/>
               <TextBlock x:Name="NotifyLatency" Style="{StaticResource Description}" Text="Время проверки Notify: нет данных"/>
               <TextBlock Text="Последние события" FontSize="19" FontWeight="SemiBold" Margin="0,14,0,8"/>
               <TextBlock x:Name="History" Text="Событий пока нет." Style="{StaticResource Description}" LineHeight="23"/>
             </StackPanel>
           </Border>
+        </StackPanel>
+        <StackPanel x:Name="CallsPage" Visibility="Collapsed">
+          <TextBlock Text="Звонки" Style="{StaticResource PageTitle}"/>
+          <WrapPanel Margin="0,8,0,8">
+            <TextBox x:Name="CallSearch" Width="145" TextChanged="FilterCalls" AutomationProperties.Name="Поиск по звонкам" ToolTip="Дата, ID или источник" Margin="0,0,6,4"/>
+            <DatePicker x:Name="CallDay" SelectedDateChanged="FilterCalls" AutomationProperties.Name="Дата звонка" Margin="0,0,6,4"/>
+            <ComboBox x:Name="CallStatusFilter" SelectedIndex="0" SelectionChanged="FilterCalls" AutomationProperties.Name="Статус звонка" Margin="0,0,6,4">
+              <ComboBoxItem Content="Все статусы" Tag=""/>
+              <ComboBoxItem Content="Текущие" Tag="active"/>
+              <ComboBoxItem Content="Завершённые" Tag="ended"/>
+              <ComboBoxItem Content="Не состоялись" Tag="failed"/>
+            </ComboBox>
+            <Button Content="Обновить" Click="RefreshCalls" Margin="0,0,6,4"/>
+          </WrapPanel>
+          <TextBlock x:Name="CallsStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
+          <ListBox x:Name="CallsList" SelectionChanged="SelectCall" DisplayMemberPath="Summary" MinHeight="72" MaxHeight="178" Margin="0,6,0,12" AutomationProperties.Name="История звонков"/>
+          <TabControl x:Name="CallDetail" Visibility="Collapsed">
+            <TabItem Header="Обзор"><StackPanel Margin="10"><TextBlock x:Name="CallSummary" Style="{StaticResource Description}"/><TextBlock x:Name="CallIdentity" Style="{StaticResource Description}" Margin="0,8,0,0"/></StackPanel></TabItem>
+            <TabItem Header="Таймлайн"><StackPanel Margin="10"><TextBlock x:Name="CallTraceStatus" Style="{StaticResource Description}"/><Canvas x:Name="CallTimeline" Height="49" Background="{DynamicResource AppBackground}" SizeChanged="DrawCallTimeline" Margin="0,8,0,0"/></StackPanel></TabItem>
+            <TabItem Header="Реплики"><StackPanel Margin="10"><TextBlock x:Name="CallTranscriptStatus" Style="{StaticResource Description}"/><ItemsControl x:Name="CallTurns" Margin="0,6,0,0"><ItemsControl.ItemTemplate><DataTemplate><TextBlock Text="{Binding Label}" TextWrapping="Wrap" Margin="0,2"/></DataTemplate></ItemsControl.ItemTemplate></ItemsControl></StackPanel></TabItem>
+            <TabItem Header="Подробности"><StackPanel Margin="10"><ListBox x:Name="CallEvents" SelectionChanged="ShowCallEvent" DisplayMemberPath="Label" MaxHeight="220" AutomationProperties.Name="Этапы звонка"/><TextBlock x:Name="CallEventDetails" Style="{StaticResource Description}" Margin="0,8,0,0"/></StackPanel></TabItem>
+            <TabItem Header="Диагностика"><Button x:Name="CopyCallReport" Content="Копировать диагностику" Click="CopyCallDiagnostics" IsEnabled="False" HorizontalAlignment="Left" Margin="10"/></TabItem>
+          </TabControl>
         </StackPanel>
         <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
           <TextBlock Text="Настройки" Style="{StaticResource PageTitle}"/>
@@ -278,13 +291,17 @@
           <Border Style="{StaticResource Card}" Margin="0,12,0,0">
             <StackPanel>
               <TextBlock Text="Контекст и инструкции Codex" FontSize="19" FontWeight="SemiBold"/>
-              <TextBlock Text="Порог переноса после звонка (70–100 %)"/>
+              <TextBlock Text="Создавать новый телефонный чат после звонка при заполнении контекста на, %" TextWrapping="Wrap" Margin="0,8,0,0"/>
+              <TextBlock Text="При достижении порога Notify переносит контекст после завершения звонка. Диапазон 70–100 %. По умолчанию 85 %. Для переноса нужны данные о заполнении." Style="{StaticResource Description}"/>
               <TextBox x:Name="RolloverPercent" AutomationProperties.Name="Порог переноса в процентах"/>
-              <TextBlock Text="Общие инструкции"/>
+              <TextBlock Text="Общие инструкции для всех разговоров" TextWrapping="Wrap"/>
+              <TextBlock Text="Правила для телефонного помощника и обращений через выбранный чат Codex." Style="{StaticResource Description}"/>
               <TextBox x:Name="GeneralInstructions" AutomationProperties.Name="Общие инструкции" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
-              <TextBlock Text="Телефонный помощник"/>
+              <TextBlock Text="Инструкции телефонного помощника" TextWrapping="Wrap"/>
+              <TextBlock Text="Манера речи, длина ответа и поведение в отдельной телефонной сессии." Style="{StaticResource Description}"/>
               <TextBox x:Name="PhoneInstructions" AutomationProperties.Name="Инструкции телефонного помощника" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
-              <TextBlock Text="Обычный чат"/>
+              <TextBlock Text="Инструкции для выбранного чата Codex" TextWrapping="Wrap"/>
+              <TextBlock Text="Добавляются к реплике и сохраняются в истории выбранного чата." Style="{StaticResource Description}"/>
               <TextBox x:Name="ChatInstructions" AutomationProperties.Name="Инструкции обычного чата" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
               <WrapPanel Margin="0,8,0,0">
                 <Button Content="Сохранить" Click="SaveInstructions"/>
@@ -296,18 +313,23 @@
           <Border Style="{StaticResource Card}" Margin="0,12,0,0">
             <StackPanel>
               <TextBlock Text="Обновления" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,10"/>
+              <TextBlock x:Name="InstalledUpdateVersion" Style="{StaticResource Description}"/>
+              <TextBlock x:Name="LatestUpdateVersion" Text="Последняя стабильная версия · Нет данных" Style="{StaticResource Description}"/>
+              <TextBlock x:Name="UpdateCheckedAt" Text="Последняя проверка · Нет данных" Style="{StaticResource Description}"/>
               <TextBlock x:Name="UpdateStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock x:Name="UpdateIntegrity" Text="Установщик не загружен." Style="{StaticResource Description}"/>
               <WrapPanel Margin="0,8,0,0">
-                <Button Content="Проверить обновления" Click="CheckUpdates"/>
-                <Button x:Name="CancelDownload" Content="Отменить" Click="CancelUpdate" IsEnabled="False"/>
+                <Button x:Name="CheckForUpdates" Content="Проверить обновления" Click="CheckUpdates"/>
+                <Button x:Name="CancelDownload" Content="Отменить загрузку" Click="CancelUpdate" IsEnabled="False"/>
               </WrapPanel>
               <StackPanel x:Name="UpdateOffer" Visibility="Collapsed" Margin="0,8,0,0">
                 <ScrollViewer MaxHeight="160" VerticalScrollBarVisibility="Auto">
                   <TextBlock x:Name="UpdateNotes" Style="{StaticResource Description}"/>
                 </ScrollViewer>
                 <WrapPanel Margin="0,8,0,0">
-                  <Button Content="Установить" Click="InstallUpdate" Style="{StaticResource AccentButton}"/>
-                  <Button Content="Позже" Click="DismissUpdate"/>
+                  <Button x:Name="DownloadInstaller" Content="Скачать обновление" Click="DownloadUpdate" Style="{StaticResource AccentButton}"/>
+                  <Button x:Name="InstallInstaller" Content="Установить" Click="InstallUpdate" Style="{StaticResource AccentButton}" IsEnabled="False"/>
+                  <Button x:Name="DeferUpdate" Content="Позже" Click="DismissUpdate"/>
                 </WrapPanel>
               </StackPanel>
             </StackPanel>
