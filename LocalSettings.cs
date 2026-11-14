@@ -8,7 +8,8 @@ internal sealed record Chat(string Id, string Name, string? Directory = null)
     public override string ToString() => Name;
 }
 
-internal sealed record Preferences(string Origin = "https://notify.alxprgs.tech", string Client = "Codex", Chat? Chat = null, string Theme = "System", bool KeepInTray = true);
+internal sealed record Preferences(string Origin = "https://notify.alxprgs.tech", string Client = "Codex", Chat? Chat = null, string Theme = "System", bool KeepInTray = true, bool PhoneEnabled = false,
+    string GeneralInstructions = "", string PhoneInstructions = "", string ChatInstructions = "", int PhoneRolloverPercent = 85);
 internal sealed record Registration(string AgentId, string SourceId, string Name, bool Online, string[] Capabilities, string[] SupportedCallProtocols);
 
 internal static class LocalSettings
@@ -17,18 +18,17 @@ internal static class LocalSettings
     internal static readonly string DirectoryPath = Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "ALXPRGS", "Notify Desktop");
 
-    private static string SettingsPath => Path.Combine(DirectoryPath, "settings.json");
-    private static string TokenPath => Path.Combine(DirectoryPath, "source.dpapi");
-    private static string PhoneTokenPath => Path.Combine(DirectoryPath, "phone-source.dpapi");
     private sealed record Credential(string Origin, string Token);
 
-    internal static Preferences Read() => File.Exists(SettingsPath)
-        ? JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(SettingsPath), Json) ?? new()
-        : new();
-
-    internal static string? ReadToken(Uri origin, bool phone = false)
+    internal static Preferences Read(string? directory = null)
     {
-        var path = phone ? PhoneTokenPath : TokenPath;
+        var path = Path.Combine(directory ?? DirectoryPath, "settings.json");
+        return File.Exists(path) ? JsonSerializer.Deserialize<Preferences>(File.ReadAllBytes(path), Json) ?? new() : new();
+    }
+
+    internal static string? ReadToken(Uri origin, string? directory = null)
+    {
+        var path = Path.Combine(directory ?? DirectoryPath, "source.dpapi");
         if (!File.Exists(path)) return null;
         var bytes = ProtectedData.Unprotect(File.ReadAllBytes(path), null, DataProtectionScope.CurrentUser);
         try
@@ -39,23 +39,16 @@ internal static class LocalSettings
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }
 
-    internal static void Save(Preferences preferences, string? token = null)
+    internal static void Save(Preferences preferences, string? token = null, string? directory = null)
     {
-        Directory.CreateDirectory(DirectoryPath);
+        directory ??= DirectoryPath;
+        Directory.CreateDirectory(directory);
         if (token != null)
         {
-            WriteToken(TokenPath, preferences.Origin, token);
+            WriteToken(Path.Combine(directory, "source.dpapi"), preferences.Origin, token);
         }
-        Write(SettingsPath, JsonSerializer.SerializeToUtf8Bytes(preferences, Json));
+        Write(Path.Combine(directory, "settings.json"), JsonSerializer.SerializeToUtf8Bytes(preferences, Json));
     }
-
-    internal static void SavePhoneToken(Uri origin, string token)
-    {
-        Directory.CreateDirectory(DirectoryPath);
-        WriteToken(PhoneTokenPath, origin.GetLeftPart(UriPartial.Authority), token);
-    }
-
-    internal static void RemovePhoneToken() => File.Delete(PhoneTokenPath);
 
     private static void WriteToken(string path, string origin, string token)
     {

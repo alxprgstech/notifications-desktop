@@ -11,6 +11,16 @@ public partial class MainWindow
     private bool codexInstalled;
     private bool harnessInstalled;
     private bool presentationReady;
+    private bool agentConnected;
+    private bool codexReplying;
+    private string? codexFailure;
+
+    internal void SetVisualTheme(string theme)
+    {
+        preferences = preferences with { Theme = theme };
+        ApplyTheme();
+        RefreshPhoneStatus();
+    }
 
     private void InitializePresentation()
     {
@@ -131,24 +141,53 @@ public partial class MainWindow
 
     private void UpdateClientStates()
     {
-        CodexState.Text = bridge is { IsCompleted: false } && preferences.Client == "Codex" && preferences.Chat is { } active
-            ? active.Name
-            : codexInstalled ? "CLI найден" : "CLI не найден";
-        HarnessState.Text = bridge is { IsCompleted: false } && preferences.Client == "Harness"
-            ? "Слушает канал плагина"
-            : harnessInstalled ? "CLI найден" : "CLI не найден";
+        var active = bridgeCancellation is not null && preferences.Client == "Codex" ? preferences.Chat : null;
+        CodexState.Text = codexReplying ? "Отвечает" : codexFailure ??
+            (active is not null ? "Готов" : codexInstalled ? "Чат не подключён" : "Недоступен");
+        CurrentCodexChat.Text = active is null ? "" : $"Текущий чат: {active.Name}";
+        HarnessState.Text = agentConnected && preferences.Client == "Harness"
+            ? "Подключён"
+            : harnessInstalled ? "Установлен, но неактивен" : "Не найден";
+    }
+
+    private async Task<string> ReplyToCodexAsync(Codex codex, Chat chat, string text, CancellationToken lifetime, CancellationToken ct)
+    {
+        string? failure = null;
+        SetReplying(true, null);
+        try
+        {
+            var extra = Volatile.Read(ref effectiveChatInstructions);
+            return await codex.ReplyAsync(chat, text, ct, extra);
+        }
+        catch (Exception) when (!ct.IsCancellationRequested)
+        {
+            failure = "Недоступен";
+            throw;
+        }
+        finally { SetReplying(false, failure); }
+
+        void SetReplying(bool value, string? state) => Dispatcher.BeginInvoke(() =>
+        {
+            if (lifetime.IsCancellationRequested) return;
+            codexReplying = value;
+            codexFailure = state;
+            UpdateClientStates();
+        });
     }
 
     private void ShowSocketState(CancellationToken lifetime, BridgeConnection state) => Dispatcher.BeginInvoke(() =>
     {
         if (lifetime.IsCancellationRequested || exiting) return;
+        agentConnected = state == BridgeConnection.Connected;
         SocketState.Text = state switch
         {
             BridgeConnection.Connecting => "Подключается…",
-            BridgeConnection.Connected => "На связи",
+            BridgeConnection.Connected => "Подключён",
             BridgeConnection.Reconnecting => "Переподключается…",
             _ => "Отключён"
         };
         tray.Text = "ALXPRGS Notify · " + SocketState.Text;
+        UpdateClientStates();
+        UpdatePhoneHome();
     });
 }

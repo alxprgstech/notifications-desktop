@@ -6,6 +6,7 @@ internal sealed class Codex(string executable)
 {
     private const string ChatInUse = "Этот чат открыт в другом процессе Codex. Освободите чат или выберите другой и нажмите «Подключить».";
     private const string ChatUnavailable = "Этот чат недоступен локальному Codex. Выберите другой сохранённый чат.";
+    internal const string SignInRequired = "Войдите в Codex CLI и повторите подключение.";
 
     internal static string? Find()
     {
@@ -44,7 +45,12 @@ internal sealed class Codex(string executable)
         try
         {
             await InitializeAsync(process, ct);
-            await ResumeChatAsync(process, chat, 2, ct);
+            await WriteAsync(process, new { id = 2, method = "account/read", @params = new { refreshToken = false } }, ct);
+            var account = await ReadResultAsync(process, 2, ct);
+            if (account.Field("requiresOpenaiAuth").ValueKind == JsonValueKind.True &&
+                account.Field("account").ValueKind != JsonValueKind.Object)
+                throw new NotifyError(SignInRequired);
+            await ResumeChatAsync(process, chat, 3, ct);
         }
         finally
         {
@@ -123,10 +129,12 @@ internal sealed class Codex(string executable)
         if (add.ExitCode != 0) throw new NotifyError("Codex не сохранил настройку MCP.");
     }
 
-    internal async Task<string> ReplyAsync(Chat chat, string text, CancellationToken ct)
+    internal async Task<string> ReplyAsync(Chat chat, string text, CancellationToken ct, string? instructions = null)
     {
         RequireChatDirectory(chat);
         string? failure = null;
+        if (!string.IsNullOrWhiteSpace(instructions))
+            text = $"Мои инструкции для этого ответа:\n{instructions}\n\nМой запрос:\n{text}";
         using var process = Start(["--ask-for-approval", "never", "--sandbox", "read-only",
             "exec", "resume", "--json", "--skip-git-repo-check", chat.Id, "-"], chat.Directory,
             diagnostic =>

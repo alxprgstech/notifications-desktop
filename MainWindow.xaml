@@ -22,7 +22,31 @@
       <Setter Property="TextWrapping" Value="Wrap"/>
       <Setter Property="Foreground" Value="{DynamicResource SecondaryText}"/>
     </Style>
-    <Style x:Key="AccentButton" TargetType="Button">
+    <Style TargetType="Button">
+      <Setter Property="Background" Value="{DynamicResource Surface}"/>
+      <Setter Property="Foreground" Value="{DynamicResource PrimaryText}"/>
+      <Setter Property="BorderBrush" Value="{DynamicResource Outline}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="12,6"/>
+      <Setter Property="Margin" Value="0,0,6,0"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="ButtonTile" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                    BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ButtonTile" Property="Opacity" Value=".85"/></Trigger>
+              <Trigger Property="IsPressed" Value="True"><Setter TargetName="ButtonTile" Property="Opacity" Value=".7"/></Trigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ButtonTile" Property="BorderBrush" Value="{DynamicResource AccentFill}"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter TargetName="ButtonTile" Property="Opacity" Value=".52"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+    <Style x:Key="AccentButton" TargetType="Button" BasedOn="{StaticResource {x:Type Button}}">
       <Setter Property="Background" Value="{DynamicResource AccentFill}"/>
       <Setter Property="Foreground" Value="{DynamicResource AccentText}"/>
       <Setter Property="Padding" Value="14,7"/>
@@ -58,7 +82,7 @@
       <TextBlock Text="{Binding Name}" TextTrimming="CharacterEllipsis"/>
     </DataTemplate>
   </Window.Resources>
-  <Grid>
+  <Grid Background="{DynamicResource AppBackground}">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="*"/>
@@ -99,14 +123,14 @@
             <Border Style="{StaticResource Card}" Margin="0,0,6,12">
               <StackPanel>
                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE753;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="Notify" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
+                <TextBlock Text="Сервер Notify" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
                 <TextBlock x:Name="NotifyState" Text="Не проверен" Style="{StaticResource Description}"/>
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Margin="6,0,0,12">
               <StackPanel>
                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE774;" Foreground="{DynamicResource AccentDetail}"/>
-                <TextBlock Text="WebSocket агента" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,9,0,3"/>
+                <TextBlock Text="Соединение агента" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,9,0,3"/>
                 <TextBlock x:Name="SocketState" Text="Отключён" Style="{StaticResource Description}"/>
               </StackPanel>
             </Border>
@@ -115,6 +139,7 @@
                 <TextBlock FontFamily="Segoe MDL2 Assets" Text="&#xE756;" Foreground="{DynamicResource AccentDetail}"/>
                 <TextBlock Text="Codex" FontSize="19" FontWeight="SemiBold" Margin="0,9,0,3"/>
                 <TextBlock x:Name="CodexState" Style="{StaticResource Description}"/>
+                <TextBlock x:Name="CurrentCodexChat" Style="{StaticResource Description}"/>
               </StackPanel>
             </Border>
             <Border Style="{StaticResource Card}" Margin="6,0,0,12">
@@ -125,6 +150,15 @@
               </StackPanel>
             </Border>
           </UniformGrid>
+          <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <StackPanel>
+              <TextBlock Text="Телефонный помощник · 7820" FontSize="19" FontWeight="SemiBold" TextWrapping="Wrap"/>
+              <TextBlock x:Name="PhoneHomeState" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock x:Name="PhoneHomeContext" Style="{StaticResource Description}"/>
+              <ProgressBar x:Name="PhoneContextMeter" Maximum="100" Height="5" Margin="0,8,0,0" Visibility="Collapsed"
+                           AutomationProperties.Name="Заполнение контекста телефонного чата"/>
+            </StackPanel>
+          </Border>
           <WrapPanel Margin="0,6,0,0">
             <Button Content="Настроить подключение" Click="OpenConnections" Style="{StaticResource AccentButton}" Margin="0,0,8,8"/>
             <Button x:Name="Stop" Content="Отключить" IsEnabled="False" Click="Disconnect" Margin="0,0,8,8"/>
@@ -134,12 +168,19 @@
         <StackPanel x:Name="ConnectionsPage" Visibility="Collapsed">
           <TextBlock Text="Подключения" Style="{StaticResource PageTitle}"/>
           <TextBlock Text="Укажите источник Notify и выберите клиент разговора." Style="{StaticResource Description}" Margin="0,0,0,20"/>
-          <Border Style="{StaticResource Card}">
-        <StackPanel x:Name="Setup">
+          <StackPanel x:Name="Setup">
+          <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <StackPanel>
+          <TextBlock Text="Сервер и доступ" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="HTTPS-адрес Notify" Margin="0,0,0,5"/>
           <TextBox x:Name="Origin" Margin="0,0,0,11" AutomationProperties.Name="HTTPS-адрес Notify"/>
           <TextBlock x:Name="TokenLabel" Text="Токен источника" Margin="0,0,0,5"/>
           <PasswordBox x:Name="Token" Margin="0,0,0,11" AutomationProperties.Name="Токен источника"/>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}" Margin="0,0,0,12">
+            <StackPanel>
+          <TextBlock Text="Клиент и чат" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
           <TextBlock Text="Клиент" Margin="0,0,0,5"/>
           <ComboBox x:Name="Client" SelectedIndex="0" SelectionChanged="ClientChanged"
                     AutomationProperties.Name="Клиент" Padding="8,5" Margin="0,0,0,11">
@@ -159,14 +200,16 @@
                          Foreground="{DynamicResource SecondaryText}" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite"/>
             </DockPanel>
           </StackPanel>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}">
           <WrapPanel>
             <Button Content="Подключить" Click="Connect" Style="{StaticResource AccentButton}" FontWeight="SemiBold"/>
             <Button Content="Проверить соединение" Click="Check"/>
             <Button Content="Кабинет Notify" Click="OpenCabinet"/>
           </WrapPanel>
-        </StackPanel>
-
           </Border>
+          </StackPanel>
         </StackPanel>
         <StackPanel x:Name="DiagnosticsPage" Visibility="Collapsed">
           <TextBlock Text="Диагностика" Style="{StaticResource PageTitle}"/>
@@ -189,7 +232,14 @@
           </Border>
           <Border Style="{StaticResource Card}">
             <StackPanel>
-              <TextBlock Text="Последние события" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <TextBlock Text="Состояние подсистем" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=NotifyState, StringFormat='Сервер Notify: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=SocketState, StringFormat='Соединение агента: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=CodexState, StringFormat='Codex: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=HarnessState, StringFormat='Harness: {0}'}"/>
+              <TextBlock Style="{StaticResource Description}" Text="{Binding Text, ElementName=PhoneHomeState, StringFormat='Телефонный помощник: {0}'}"/>
+              <TextBlock x:Name="NotifyLatency" Style="{StaticResource Description}" Text="Время проверки Notify: нет данных"/>
+              <TextBlock Text="Последние события" FontSize="19" FontWeight="SemiBold" Margin="0,14,0,8"/>
               <TextBlock x:Name="History" Text="Событий пока нет." Style="{StaticResource Description}" LineHeight="23"/>
             </StackPanel>
           </Border>
@@ -220,11 +270,26 @@
               <TextBlock Text="Телефонный помощник" FontSize="19" FontWeight="SemiBold" Margin="0,0,0,10"/>
               <TextBlock x:Name="PhoneAssistantStatus" Style="{StaticResource Description}" AutomationProperties.LiveSetting="Polite"/>
               <TextBlock x:Name="PhoneAssistantCall" Style="{StaticResource Description}" Margin="0,4,0,0"/>
-              <TextBlock Text="Токен отдельного источника Notify" Style="{StaticResource Description}" Margin="0,8,0,4"/>
-              <PasswordBox x:Name="PhoneAssistantToken" MaxLength="512" AutomationProperties.Name="Токен телефонного помощника"/>
+              <CheckBox x:Name="PhoneAssistantEnabled" Content="Включить телефонного помощника" Click="ChangePhoneMode" Margin="0,8,0,0"/>
+              <Button Content="Создать новый телефонный чат" Click="NewPhoneThread" Margin="0,8,0,0"/>
+              <Button Content="Сжать контекст текущего чата" Click="CompactPhoneThread" Margin="0,8,0,0"/>
+            </StackPanel>
+          </Border>
+          <Border Style="{StaticResource Card}" Margin="0,12,0,0">
+            <StackPanel>
+              <TextBlock Text="Контекст и инструкции Codex" FontSize="19" FontWeight="SemiBold"/>
+              <TextBlock Text="Порог переноса после звонка (70–100 %)"/>
+              <TextBox x:Name="RolloverPercent" AutomationProperties.Name="Порог переноса в процентах"/>
+              <TextBlock Text="Общие инструкции"/>
+              <TextBox x:Name="GeneralInstructions" AutomationProperties.Name="Общие инструкции" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
+              <TextBlock Text="Телефонный помощник"/>
+              <TextBox x:Name="PhoneInstructions" AutomationProperties.Name="Инструкции телефонного помощника" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
+              <TextBlock Text="Обычный чат"/>
+              <TextBox x:Name="ChatInstructions" AutomationProperties.Name="Инструкции обычного чата" AcceptsReturn="True" TextWrapping="Wrap" MaxLength="4000" MinHeight="56"/>
               <WrapPanel Margin="0,8,0,0">
-                <Button Content="Включить помощника" Click="EnablePhone"/>
-                <Button Content="Отключить помощника" Click="DisablePhone"/>
+                <Button Content="Сохранить" Click="SaveInstructions"/>
+                <Button Content="Предпросмотр" Click="PreviewInstructions"/>
+                <Button Content="Сбросить" Click="ResetInstructions"/>
               </WrapPanel>
             </StackPanel>
           </Border>

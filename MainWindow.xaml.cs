@@ -20,10 +20,12 @@ public partial class MainWindow : Window
     private bool exiting;
     private bool checking;
 
-    public MainWindow()
+    public MainWindow() : this(visualTest: false) { }
+
+    internal MainWindow(bool visualTest)
     {
         InitializeComponent();
-        try { preferences = LocalSettings.Read(); }
+        try { if (!visualTest) preferences = LocalSettings.Read(); }
         catch (Exception error) when (error is IOException or JsonException or UnauthorizedAccessException)
         { Report("Локальные настройки недоступны."); }
         Origin.Text = preferences.Origin;
@@ -32,10 +34,11 @@ public partial class MainWindow : Window
         using var run = Registry.CurrentUser.OpenSubKey(RunKey);
         AutoStart.IsChecked = run?.GetValue(RunValue) is string;
         InitializePresentation();
+        LoadInstructions();
         DetectClients();
         ContentRendered += async (_, _) =>
         {
-            if (Client.SelectedIndex == 0 && Chats.Items.Count == 0 && Codex.Find() is not null)
+            if (!visualTest && Client.SelectedIndex == 0 && Chats.Items.Count == 0 && Codex.Find() is not null)
                 await WithControlsAsync(LoadChatsAsync);
         };
         Closing += async (_, eventArgs) =>
@@ -56,8 +59,8 @@ public partial class MainWindow : Window
         menu.Items.Add("Выход", null, async (_, _) => await ExitAsync());
         tray = new Forms.NotifyIcon
         {
-            Icon = LoadTrayIcon(), Text = "ALXPRGS Notify Desktop",
-            ContextMenuStrip = menu, Visible = true
+            Icon = visualTest ? null : LoadTrayIcon(), Text = "ALXPRGS Notify Desktop",
+            ContextMenuStrip = menu, Visible = !visualTest
         };
         tray.DoubleClick += (_, _) => ShowWindow();
         tray.BalloonTipClicked += (_, _) => ShowUpdates();
@@ -68,7 +71,8 @@ public partial class MainWindow : Window
         Dispatcher.BeginInvoke(async () =>
         {
             StartUpdates();
-            StartSavedPhone();
+            PhoneAssistantEnabled.IsChecked = preferences.PhoneEnabled;
+            RefreshPhoneStatus();
             try
             {
                 if (LocalSettings.ReadToken(LocalSettings.HttpsOrigin(preferences.Origin)) is not null &&
@@ -118,6 +122,7 @@ public partial class MainWindow : Window
         try
         {
             var chats = await RequireCodex().ChatsAsync(ct);
+            chats.RemoveAll(chat => IsPhoneThread(chat));
             Chats.Items.Clear();
             foreach (var chat in chats) Chats.Items.Add(chat);
             Chats.SelectedItem = chats.FirstOrDefault(chat => chat.Id == current);
@@ -137,8 +142,6 @@ public partial class MainWindow : Window
     {
         var origin = LocalSettings.HttpsOrigin(Origin.Text.Trim());
         var token = RequireToken(origin);
-        if (token == LocalSettings.ReadToken(origin, phone: true))
-            throw new NotifyError("Для обычного подключения и телефонного помощника нужны разные источники Notify.");
         var client = Client.SelectedIndex == 0 ? "Codex" : "Harness";
         var chat = Chats.SelectedItem as Chat;
         Codex? codex = null;
@@ -160,11 +163,17 @@ public partial class MainWindow : Window
             throw new NotifyError("Сервер Notify должен поддерживать протокол звонков v2.");
         if (codex is not null && chat is not null)
         {
+            if (IsPhoneThread(chat)) throw new NotifyError("Выберите обычный чат Codex.");
             ChatStatus.Text = "Проверяем доступность выбранного чата…";
             try { await codex.CheckChatAsync(chat, ct); }
             catch (NotifyError error)
             {
                 ChatStatus.Text = error.Message;
+                if (bridgeCancellation is null)
+                {
+                    codexFailure = error.Message == Codex.SignInRequired ? "Не авторизован" : "Недоступен";
+                    UpdateClientStates();
+                }
                 throw;
             }
             ChatStatus.Text = "Чат доступен для подключения.";
@@ -192,12 +201,13 @@ public partial class MainWindow : Window
         var lifetime = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         bridgeCancellation = lifetime;
         SocketState.Text = client == "Harness" ? "Ждёт чат Harness" : "Подключается…";
+        RefreshPhoneStatus();
         bridge = Task.Run(async () =>
         {
             try
             {
                 if (codex is not null && chat is not null)
-                    await RunBridgeAsync(chat, (text, cancellation) => codex.ReplyAsync(chat, text, cancellation), lifetime.Token);
+                    await RunBridgeAsync(chat, (text, cancellation) => ReplyToCodexAsync(codex, chat, text, lifetime.Token, cancellation), lifetime.Token);
                 else
                     await new HarnessLink(Report).RunAsync(RunBridgeAsync, lifetime.Token);
             }
@@ -214,10 +224,32 @@ public partial class MainWindow : Window
         Stop.IsEnabled = true;
         UpdateClientStates();
 
-        Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation) =>
-            new AgentBridge(origin, token, registration, bound, reply, Report,
-                connectionChanged: state => ShowSocketState(cancellation, state),
-                enterCall: callActivity.TryEnter, leaveCall: CallFinished).RunAsync(cancellation);
+        async Task RunBridgeAsync(Chat bound, Func<string, CancellationToken, Task<string>> reply, CancellationToken cancellation)
+        {
+            var executable = Codex.Find();
+            await using var phone = executable is null ? null :
+                new PhoneCodex(new Codex(executable), PhoneDirectory, usage => ShowPhoneUsage(cancellation, usage),
+                    () => Volatile.Read(ref effectivePhoneInstructions));
+            Volatile.Write(ref activePhone, phone);
+            using var warmupLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellation);
+            var warmup = phone is null ? Task.CompletedTask : WarmPhoneAsync(phone, warmupLifetime.Token);
+            try
+            {
+                await new AgentBridge(origin, token, registration, bound, reply, Report,
+                    connectionChanged: state => ShowSocketState(cancellation, state),
+                    enterCall: callActivity.TryEnter, leaveCall: CallFinished,
+                    phoneReply: phone is null ? null : phone.ReplyAsync,
+                    phoneEnabled: () => Volatile.Read(ref phoneEnabled),
+                    phoneState: (number, active) => ShowPhoneCall(cancellation, number, active),
+                    phoneReady: () => phone?.Ready == true).RunAsync(cancellation);
+            }
+            finally
+            {
+                Volatile.Write(ref activePhone, null);
+                await warmupLifetime.CancelAsync();
+                await warmup;
+            }
+        }
     });
 
     private async void Check(object sender, RoutedEventArgs e) => await WithControlsAsync(async ct =>
@@ -241,16 +273,19 @@ public partial class MainWindow : Window
 
     private async Task<Registration> ReadRegistrationAsync(NotifyHttp api, CancellationToken ct)
     {
-        NotifyState.Text = "Проверяем регистрацию…";
+        NotifyState.Text = "Проверяется…";
+        var started = Stopwatch.GetTimestamp();
         try
         {
             var entry = await api.RegistrationAsync(ct);
-            NotifyState.Text = "Регистрация подтверждена";
+            NotifyState.Text = "Доступен";
+            NotifyLatency.Text = $"Время проверки Notify: {Stopwatch.GetElapsedTime(started).TotalMilliseconds:F0} мс";
             return entry;
         }
         catch (Exception error)
         {
-            NotifyState.Text = Friendly(error);
+            NotifyState.Text = error is HttpRequestException or OperationCanceledException ? "Недоступен" : "Доступ не подтверждён";
+            NotifyLatency.Text = "Время проверки Notify: нет данных";
             AgentId.Clear();
             SourceId.Clear();
             throw;
@@ -278,7 +313,7 @@ public partial class MainWindow : Window
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(appLifetime.Token);
         timeout.CancelAfter(TimeSpan.FromSeconds(35));
         try { await action(timeout.Token); }
-        catch (Exception error) { Report(Friendly(error)); }
+        catch (Exception error) { Report(Friendly(error), "Ошибка"); }
         finally { Setup.IsEnabled = true; checking = false; }
     }
 
@@ -299,6 +334,16 @@ public partial class MainWindow : Window
             stoppingBridge = null;
             cancellation.Dispose();
         }
+        agentConnected = false;
+        codexReplying = false;
+        codexFailure = null;
+        phoneReady = false;
+        phoneActive = false;
+        phoneFailed = false;
+        PhoneHomeContext.Text = "";
+        PhoneContextMeter.Visibility = Visibility.Collapsed;
+        RefreshPhoneStatus();
+        PhoneAssistantCall.Text = "";
         SocketState.Text = "Отключён";
         tray.Text = "ALXPRGS Notify · Отключён";
         UpdateClientStates();
@@ -316,7 +361,6 @@ public partial class MainWindow : Window
         if (exiting) return;
         exiting = true;
         await appLifetime.CancelAsync();
-        await StopPhoneAsync();
         await StopBridgeAsync();
         appLifetime.Dispose();
         tray.Visible = false;
@@ -327,12 +371,14 @@ public partial class MainWindow : Window
         Application.Current.Shutdown();
     }
 
-    private void Report(string message)
+    private void Report(string message) => Report(message, "Сведения");
+
+    private void Report(string message, string level)
     {
-        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => Report(message)); return; }
+        if (!Dispatcher.CheckAccess()) { Dispatcher.BeginInvoke(() => Report(message, level)); return; }
         Status.Text = message;
-        history.Enqueue($"{DateTime.Now:HH:mm:ss}   {message}");
-        while (history.Count > 5) history.Dequeue();
+        history.Enqueue($"{DateTime.Now:HH:mm:ss} · {level} · {message}");
+        while (history.Count > 15) history.Dequeue();
         History.Text = string.Join(Environment.NewLine, history.Reverse());
     }
 
