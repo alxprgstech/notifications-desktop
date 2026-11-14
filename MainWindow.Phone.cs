@@ -58,7 +58,8 @@ public partial class MainWindow
     private void PreviewInstructions(object sender, RoutedEventArgs e)
     {
         var preview = $"Телефонный помощник\n\n{PhoneCodex.Instructions}\n\n{Combine(GeneralInstructions.Text, PhoneInstructions.Text)}\n\n" +
-            $"Обычный чат · дополнительные инструкции\n\n{Combine(GeneralInstructions.Text, ChatInstructions.Text) ?? "Нет"}";
+            $"Обычный чат · дополнительные инструкции\n" +
+            $"Codex получает их вместе с репликой и сохраняет в истории чата.\n\n{Combine(GeneralInstructions.Text, ChatInstructions.Text) ?? "Нет"}";
         var box = new System.Windows.Controls.TextBox { Text = preview, IsReadOnly = true, TextWrapping = TextWrapping.Wrap,
             VerticalScrollBarVisibility = System.Windows.Controls.ScrollBarVisibility.Auto, Padding = new Thickness(12) };
         new Window { Owner = this, Title = "Предпросмотр инструкций Codex", Width = 620, Height = 460,
