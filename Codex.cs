@@ -129,12 +129,26 @@ internal sealed class Codex(string executable)
         if (add.ExitCode != 0) throw new NotifyError("Codex не сохранил настройку MCP.");
     }
 
-    internal async Task<string> ReplyAsync(Chat chat, string text, CancellationToken ct)
+    internal async Task<string> ReplyAsync(Chat chat, string text, CancellationToken ct, string? instructions = null)
     {
         RequireChatDirectory(chat);
         string? failure = null;
-        using var process = Start(["--ask-for-approval", "never", "--sandbox", "read-only",
-            "exec", "resume", "--json", "--skip-git-repo-check", chat.Id, "-"], chat.Directory,
+        var arguments = new List<string> { "--ask-for-approval", "never", "--sandbox", "read-only" };
+        if (!string.IsNullOrWhiteSpace(instructions))
+        {
+            var quoted = new StringBuilder().Append('"');
+            foreach (var character in instructions)
+                quoted.Append(character switch
+                {
+                    '"' => "\\\"",
+                    '\\' => "\\\\",
+                    _ when char.IsControl(character) => $"\\u{(int)character:X4}",
+                    _ => character.ToString()
+                });
+            arguments.AddRange(["-c", "developer_instructions=" + quoted.Append('"')]);
+        }
+        arguments.AddRange(["exec", "resume", "--json", "--skip-git-repo-check", chat.Id, "-"]);
+        using var process = Start(arguments.ToArray(), chat.Directory,
             diagnostic =>
             {
                 if (ExplainFailure(diagnostic) is { } known) Interlocked.CompareExchange(ref failure, known, null);

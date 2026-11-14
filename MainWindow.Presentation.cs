@@ -157,8 +157,7 @@ public partial class MainWindow
         try
         {
             var extra = Volatile.Read(ref effectiveChatInstructions);
-            var prompt = extra is null ? text : $"Мои инструкции для этого ответа:\n{extra}\n\nМой запрос:\n{text}";
-            return await codex.ReplyAsync(chat, prompt, ct);
+            return await codex.ReplyAsync(chat, text, ct, extra);
         }
         catch (Exception) when (!ct.IsCancellationRequested)
         {
