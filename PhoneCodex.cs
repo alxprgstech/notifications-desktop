@@ -319,10 +319,11 @@ internal static class PhoneTiming
         if (Environment.GetEnvironmentVariable("NOTIFY_PHONE_TIMING") != "1") return;
         try
         {
-            Directory.CreateDirectory(LocalSettings.DirectoryPath);
+            var directory = Environment.GetEnvironmentVariable("NOTIFY_PHONE_TIMING_DIRECTORY") ?? LocalSettings.DirectoryPath;
+            Directory.CreateDirectory(directory);
             var line = JsonSerializer.Serialize(new { callId, turnId, stage, ticks = Stopwatch.GetTimestamp(),
                 frequency = Stopwatch.Frequency, elapsedMs = started is { } timestamp ? Stopwatch.GetElapsedTime(timestamp).TotalMilliseconds : (double?)null });
-            var path = Path.Combine(LocalSettings.DirectoryPath, "phone-timing.jsonl");
+            var path = Path.Combine(directory, "phone-timing.jsonl");
             if (File.Exists(path) && new FileInfo(path).Length >= 4 * 1024 * 1024) File.Move(path, path + ".1", true);
             File.AppendAllText(path, line + Environment.NewLine);
         }
